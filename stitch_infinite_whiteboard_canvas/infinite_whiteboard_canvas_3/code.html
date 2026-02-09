@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Advanced Whiteboard UI Controls</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#13a4ec",
+                        "background-light": "#f6f7f8",
+                        "background-dark": "#101c22",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem", 
+                        "lg": "0.5rem", 
+                        "xl": "0.75rem", 
+                        "2xl": "1rem",
+                        "full": "9999px"
+                    },
+                    backgroundImage: {
+                        'grid-pattern': "radial-gradient(#cbd5e1 1px, transparent 1px)",
+                        'grid-pattern-dark': "radial-gradient(#334155 1px, transparent 1px)",
+                    },
+                    backgroundSize: {
+                        'grid': '20px 20px',
+                    },
+                    boxShadow: {
+                        'toolbar': '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+                        'floating': '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="font-display bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 overflow-hidden h-screen w-screen relative group/design-root">
+<div class="absolute inset-0 z-0 bg-background-light dark:bg-background-dark bg-grid-pattern dark:bg-grid-pattern-dark bg-grid opacity-60 pointer-events-none"></div>
+<header class="absolute top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-3 pointer-events-none">
+<div class="flex items-center gap-4 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm p-1.5 pr-4 rounded-xl shadow-toolbar pointer-events-auto">
+<button class="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors text-slate-600 dark:text-slate-300">
+<span class="material-symbols-outlined text-[24px]">home</span>
+</button>
+<div class="h-6 w-px bg-slate-200 dark:bg-slate-600"></div>
+<div class="flex flex-col justify-center px-1">
+<div class="flex items-center gap-2">
+<h1 class="text-sm font-bold leading-tight text-slate-900 dark:text-white">Project Brainstorm</h1>
+<span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">Active</span>
+</div>
+<span class="text-[11px] text-slate-500 dark:text-slate-400">Last edited just now</span>
+</div>
+<button class="ml-1 p-1 text-amber-400 hover:text-amber-500 rounded-md">
+<span class="material-symbols-outlined text-[20px] filled">star</span>
+</button>
+</div>
+<div class="hidden md:flex items-center gap-2 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm p-1.5 rounded-xl shadow-toolbar pointer-events-auto">
+<div class="relative group">
+<span class="absolute inset-y-0 left-0 flex items-center pl-2 text-slate-400">
+<span class="material-symbols-outlined text-[18px]">search</span>
+</span>
+<input class="py-1.5 pl-8 pr-3 text-sm bg-slate-50 dark:bg-slate-700/50 border-none rounded-lg focus:ring-2 focus:ring-primary w-40 transition-all hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 placeholder-slate-400" placeholder="Search..." type="text"/>
+</div>
+<div class="h-5 w-px bg-slate-200 dark:bg-slate-600 mx-1"></div>
+<button class="flex items-center gap-1.5 px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-slate-600 dark:text-slate-300 transition-colors" title="Timer">
+<span class="material-symbols-outlined text-[20px]">timer</span>
+<span class="text-sm font-medium">Timer</span>
+</button>
+<button class="flex items-center gap-1.5 px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-slate-600 dark:text-slate-300 transition-colors" title="Voting">
+<span class="material-symbols-outlined text-[20px]">how_to_vote</span>
+<span class="text-sm font-medium">Voting</span>
+</button>
+<button class="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 rounded-lg transition-colors border border-indigo-100 dark:border-indigo-800" title="Presentation Mode">
+<span class="material-symbols-outlined text-[20px]">play_circle</span>
+<span class="text-sm font-medium">Present</span>
+</button>
+</div>
+<div class="flex items-center gap-3 pointer-events-auto">
+<div class="flex -space-x-2 mr-2">
+<div class="w-8 h-8 rounded-full border-2 border-white dark:border-slate-800 bg-cover bg-center" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCD6XLfLoLTrSRfBnlxCVsG3bbFhd-vQCjMoRlyrRNAhot84AoSOUexl79OQ-sLsP1cTpwvhJpbQsU70j6OzTq6osvN1z0oeRZE82n7xt_3xJO46BHXBm5DBbsHpz5TaPFgXfK1JekNlmP2idVITTdyR1q1c3DRcUSdaDToUQBkuAy7QpyfOOVzNe5l2qymJwbXBuHUBYaN0CTxheulDyIYCfghQ576MHzD7A4qWKzTAOaLwX5t3juQ67UQRe2-SUnmmlVC6as20C6V');"></div>
+<div class="w-8 h-8 rounded-full border-2 border-white dark:border-slate-800 bg-cover bg-center" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAmK2ZyrmwfHpnjlbB8qD1Lra4Fa2lAv4NoRHQs_WeZyVHPItkgxaYoBWvzIIsNV70Hke9dKs-NeBlqgYWd584W9M_h1NF_CuDmLoR0K4ShEQlPyH8Nu8CgMe9Sur0sXwgYL8V8Yb_jpCokAoANkVCCjqKB_kWtk63yR4HeiVBWzKfzF9krasLflXi9azECc2F_BLIW13jUOkBC51uTvbtRadMdVtNBmIECTiL2yeM9sflS-LywL6N-V19ylI9nBff4itzsI3qxxIiu');"></div>
+<div class="w-8 h-8 rounded-full border-2 border-white dark:border-slate-800 bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-[10px] font-bold text-slate-600 dark:text-slate-300">+3</div>
+</div>
+<button class="flex items-center gap-2 px-3 py-2 bg-primary text-white text-sm font-bold rounded-lg hover:bg-primary/90 transition-colors shadow-sm shadow-primary/20">
+<span class="material-symbols-outlined text-[18px]">share</span>
+                Share
+            </button>
+<div class="h-8 w-px bg-slate-300 dark:bg-slate-600 mx-1"></div>
+<div class="w-9 h-9 rounded-full bg-cover bg-center border border-slate-200 dark:border-slate-700 cursor-pointer hover:ring-2 ring-primary ring-offset-2 dark:ring-offset-slate-900 transition-all" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuBux-nzWlAx9NTuhPp9nW0Nj-6rH6No_7-DdFec18iRpqrtA3TtumT31vaJUfkZuOYMGWPdiXbHY8WSZFKKfpjf-IAJYdiT7y6_-YEBog9XzusmDmxKs_FYuocPlaLS_jhyQJ1hRCagyfiUulU3KCDLldyIaykouYvcIIHSlwMS8wF3cv78R49J_VqISwN5tCiBs_h1sdth66jhhnrPuT2yq4jsf9rOJD3Mx0SREc72lmTXGvLOeqlrG1kkKN0xERA8mJk-9rHQAWSy');"></div>
+</div>
+</header>
+<div class="absolute left-6 top-1/2 -translate-y-1/2 z-40 flex flex-col gap-1.5 bg-white dark:bg-slate-800 p-1.5 rounded-xl shadow-floating border border-slate-200 dark:border-slate-700">
+<button class="group relative flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all">
+<span class="material-symbols-outlined text-[22px]">ads_click</span>
+<span class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 shadow-lg">Select (V)</span>
+</button>
+<button class="group relative flex items-center justify-center w-10 h-10 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white transition-all">
+<span class="material-symbols-outlined text-[22px]">grid_view</span>
+<span class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 shadow-lg">Templates</span>
+</button>
+<button class="group relative flex items-center justify-center w-10 h-10 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white transition-all">
+<span class="material-symbols-outlined text-[22px]">title</span>
+<span class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 shadow-lg">Text (T)</span>
+</button>
+<button class="group relative flex items-center justify-center w-10 h-10 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white transition-all">
+<span class="material-symbols-outlined text-[22px] filled">sticky_note_2</span>
+<span class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 shadow-lg">Sticky Note (N)</span>
+</button>
+<button class="group relative flex items-center justify-center w-10 h-10 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white transition-all">
+<span class="material-symbols-outlined text-[22px]">shapes</span>
+<span class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 shadow-lg">Shapes (S)</span>
+</button>
+<button class="group relative flex items-center justify-center w-10 h-10 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white transition-all">
+<span class="material-symbols-outlined text-[22px]">airline_stops</span>
+<span class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 shadow-lg">Connection (L)</span>
+</button>
+<button class="group relative flex items-center justify-center w-10 h-10 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white transition-all">
+<span class="material-symbols-outlined text-[22px]">draw</span>
+<span class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 shadow-lg">Pen (P)</span>
+</button>
+<div class="h-px bg-slate-200 dark:bg-slate-700 my-0.5 w-8 mx-auto"></div>
+<button class="group relative flex items-center justify-center w-10 h-10 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white transition-all">
+<span class="material-symbols-outlined text-[22px]">more_horiz</span>
+<span class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 shadow-lg">More Tools</span>
+</button>
+</div>
+<div class="absolute right-6 top-[88px] bottom-20 w-72 bg-white dark:bg-slate-800 rounded-xl shadow-floating border border-slate-200 dark:border-slate-700 z-40 flex flex-col overflow-hidden">
+<div class="flex items-center border-b border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/20">
+<button class="flex-1 py-3 text-xs font-semibold uppercase tracking-wide text-primary border-b-2 border-primary bg-white dark:bg-slate-800">
+                Layers
+            </button>
+<button class="flex-1 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 border-b-2 border-transparent">
+                Comments (2)
+            </button>
+</div>
+<div class="flex-1 overflow-y-auto p-2 space-y-1">
+<div class="flex items-center justify-between p-2 rounded-lg bg-slate-100 dark:bg-slate-700/50 group cursor-pointer border border-transparent hover:border-primary/30">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-amber-500 filled">sticky_note_2</span>
+<span class="text-sm text-slate-700 dark:text-slate-200 font-medium">Q4 Goals</span>
+</div>
+<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"><span class="material-symbols-outlined text-[14px]">lock</span></button>
+<button class="p-1 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"><span class="material-symbols-outlined text-[14px]">visibility</span></button>
+</div>
+</div>
+<div class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/30 group cursor-pointer border border-transparent hover:border-slate-200 dark:hover:border-slate-600">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-slate-400">rectangle</span>
+<span class="text-sm text-slate-600 dark:text-slate-300">Start Node</span>
+</div>
+<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"><span class="material-symbols-outlined text-[14px]">lock_open</span></button>
+<button class="p-1 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"><span class="material-symbols-outlined text-[14px]">visibility</span></button>
+</div>
+</div>
+<div class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/30 group cursor-pointer border border-transparent hover:border-slate-200 dark:hover:border-slate-600">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-green-500">circle</span>
+<span class="text-sm text-slate-600 dark:text-slate-300">End Node</span>
+</div>
+<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"><span class="material-symbols-outlined text-[14px]">lock_open</span></button>
+<button class="p-1 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"><span class="material-symbols-outlined text-[14px]">visibility</span></button>
+</div>
+</div>
+<div class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/30 group cursor-pointer border border-transparent hover:border-slate-200 dark:hover:border-slate-600">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-slate-400">arrow_right_alt</span>
+<span class="text-sm text-slate-600 dark:text-slate-300">Process Flow</span>
+</div>
+<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"><span class="material-symbols-outlined text-[14px]">lock_open</span></button>
+<button class="p-1 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"><span class="material-symbols-outlined text-[14px]">visibility</span></button>
+</div>
+</div>
+<div class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/30 group cursor-pointer border border-transparent hover:border-slate-200 dark:hover:border-slate-600">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-purple-500">draw</span>
+<span class="text-sm text-slate-600 dark:text-slate-300">Sketch 1</span>
+</div>
+<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"><span class="material-symbols-outlined text-[14px]">lock_open</span></button>
+<button class="p-1 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"><span class="material-symbols-outlined text-[14px]">visibility</span></button>
+</div>
+</div>
+</div>
+<div class="p-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50">
+<button class="w-full py-2 flex items-center justify-center gap-2 text-sm text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-lg shadow-sm hover:shadow transition-all">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                New Layer
+            </button>
+</div>
+</div>
+<div class="absolute bottom-6 left-6 z-40 flex flex-col gap-4">
+<div class="bg-white dark:bg-slate-800 p-2 rounded-lg shadow-floating border border-slate-200 dark:border-slate-700 w-48 h-32 relative overflow-hidden group cursor-grab">
+<div class="absolute inset-0 bg-slate-50 dark:bg-slate-900">
+<div class="absolute top-1/4 left-1/4 w-8 h-8 bg-amber-200 opacity-50 rounded-sm"></div>
+<div class="absolute top-1/3 left-1/2 w-12 h-6 bg-blue-200 opacity-50 rounded-sm"></div>
+<div class="absolute top-[20%] left-[20%] w-[40%] h-[50%] border-2 border-primary bg-primary/10 cursor-move shadow-sm"></div>
+</div>
+<button class="absolute top-1 right-1 p-1 bg-white/80 dark:bg-slate-800/80 rounded hover:bg-white dark:hover:bg-slate-700 backdrop-blur">
+<span class="material-symbols-outlined text-[16px] text-slate-500">close</span>
+</button>
+</div>
+<div class="flex items-center bg-white dark:bg-slate-800 rounded-lg shadow-toolbar border border-slate-200 dark:border-slate-700 p-1 self-start">
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300">
+<span class="material-symbols-outlined text-[20px]">remove</span>
+</button>
+<button class="px-2 h-8 flex items-center justify-center text-sm font-bold text-slate-700 dark:text-slate-200 min-w-[3.5rem] hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded cursor-pointer">
+                100%
+            </button>
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300">
+<span class="material-symbols-outlined text-[20px]">add</span>
+</button>
+<div class="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-1"></div>
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300" title="Fit to screen">
+<span class="material-symbols-outlined text-[20px]">fit_screen</span>
+</button>
+</div>
+</div>
+<div class="absolute bottom-6 right-6 z-40 flex flex-col items-end gap-3">
+<div class="flex items-center gap-3 mb-2">
+<div class="flex items-center gap-2 px-3 py-1.5 bg-white/90 dark:bg-slate-800/90 backdrop-blur rounded-full shadow-sm border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-500 dark:text-slate-400">
+<span class="material-symbols-outlined text-[14px] text-green-500">cloud_done</span>
+                Auto-saved
+            </div>
+<button class="flex items-center gap-1.5 px-3 py-1.5 bg-white/90 dark:bg-slate-800/90 backdrop-blur rounded-full shadow-sm border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700">
+<span class="material-symbols-outlined text-[14px]">grid_on</span>
+                Grid Settings
+            </button>
+</div>
+<div class="flex gap-3">
+<div class="flex items-center bg-white dark:bg-slate-800 rounded-lg shadow-toolbar border border-slate-200 dark:border-slate-700 p-1">
+<button class="w-9 h-9 flex items-center justify-center rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400">
+<span class="material-symbols-outlined text-[20px]">undo</span>
+</button>
+<button class="w-9 h-9 flex items-center justify-center rounded hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400">
+<span class="material-symbols-outlined text-[20px]">redo</span>
+</button>
+</div>
+<button class="w-11 h-11 flex items-center justify-center rounded-full bg-slate-900 dark:bg-slate-700 text-white shadow-lg hover:scale-105 transition-transform">
+<span class="material-symbols-outlined text-[24px]">question_mark</span>
+</button>
+</div>
+</div>
+<div class="absolute top-0 left-0 w-full h-full z-10 overflow-hidden pointer-events-none">
+<div class="relative w-full h-full pointer-events-auto cursor-grab active:cursor-grabbing">
+<div class="absolute top-1/3 left-1/4 -translate-y-1/2 -translate-x-1/2 z-30 flex flex-col items-center">
+<div class="mb-4 flex items-center gap-1 p-1.5 bg-white dark:bg-slate-800 rounded-lg shadow-floating border border-slate-200 dark:border-slate-700 animate-in fade-in zoom-in duration-200">
+<div class="flex items-center gap-1 px-1">
+<button class="w-8 h-8 hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center justify-center" title="Font Family">
+<span class="font-serif font-bold text-slate-700 dark:text-slate-200">T</span>
+</button>
+<button class="flex items-center justify-between w-12 px-1.5 h-8 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-xs font-medium text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600">
+                            14
+                            <span class="material-symbols-outlined text-[14px]">arrow_drop_down</span>
+</button>
+</div>
+<div class="w-px h-5 bg-slate-200 dark:bg-slate-600"></div>
+<div class="flex items-center gap-0.5 px-1">
+<button class="w-8 h-8 bg-slate-100 dark:bg-slate-700 rounded flex items-center justify-center text-slate-900 dark:text-white">
+<span class="material-symbols-outlined text-[18px]">format_bold</span>
+</button>
+<button class="w-8 h-8 hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center justify-center text-slate-600 dark:text-slate-300">
+<span class="material-symbols-outlined text-[18px]">format_italic</span>
+</button>
+<button class="w-8 h-8 hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center justify-center text-slate-600 dark:text-slate-300">
+<span class="material-symbols-outlined text-[18px]">format_underlined</span>
+</button>
+</div>
+<div class="w-px h-5 bg-slate-200 dark:bg-slate-600"></div>
+<div class="flex items-center gap-1 px-1">
+<button class="w-8 h-8 hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center justify-center">
+<div class="w-4 h-4 rounded-full bg-amber-400 border border-slate-300 shadow-sm"></div>
+</button>
+<button class="w-8 h-8 hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center justify-center text-slate-600 dark:text-slate-300">
+<span class="material-symbols-outlined text-[18px]">link</span>
+</button>
+<button class="w-8 h-8 hover:bg-red-50 dark:hover:bg-red-900/30 rounded flex items-center justify-center text-red-500">
+<span class="material-symbols-outlined text-[18px]">delete</span>
+</button>
+</div>
+</div>
+<div class="relative w-64 h-64 bg-[#fef08a] dark:bg-[#ca8a04] shadow-xl transform flex flex-col p-6 cursor-pointer group ring-2 ring-primary ring-offset-2 ring-offset-[#fef08a] dark:ring-offset-[#ca8a04]">
+<div class="absolute -top-1 -right-1 w-3 h-3 bg-white border border-primary rounded-full z-10"></div>
+<div class="absolute -top-1 -left-1 w-3 h-3 bg-white border border-primary rounded-full z-10"></div>
+<div class="absolute -bottom-1 -right-1 w-3 h-3 bg-white border border-primary rounded-full z-10"></div>
+<div class="absolute -bottom-1 -left-1 w-3 h-3 bg-white border border-primary rounded-full z-10"></div>
+<div class="flex-1 font-display text-lg text-slate-800 dark:text-slate-900 leading-relaxed font-medium">
+<p>Q4 Goals:</p>
+<ul class="list-disc ml-5 mt-2 space-y-2">
+<li>Launch beta</li>
+<li>User feedback</li>
+<li class="bg-blue-200/50 -mx-1 px-1 rounded">Iteration sprint</li>
+</ul>
+</div>
+<div class="flex justify-between items-end mt-4 text-xs text-slate-600/60 dark:text-slate-900/60 font-medium">
+<span>Just now</span>
+<div class="w-6 h-6 rounded-full bg-cover bg-center border border-white/20" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAdXDfhJNmJPzwpvl_mpYayhipjbH4H_lesfLx-mI2gDbfBnGENcLPpbHuxb2eQ5X3GaZpoy4iyRhABnrtk0_CVXAC4UZWedxnXPNnSDxPuG3lMypUJe9WSRN5J3STsHXt0RX5qb6J2U2poOu-IKnXRKwRcYe1D_H1ZpLQweh9ktclK3i1UZdiYjCDbA-OC8-j4Sc9wQXdDuUOtpyTZbjnVousvL2NgdvFYqvwuDkoYfJFw_7f9LK07FYkCLZuQ8-No49sSZQmfpsn0');"></div>
+</div>
+</div>
+</div>
+<div class="absolute top-1/2 left-1/2 -translate-x-[10%] -translate-y-[10%] flex items-center gap-16 opacity-60 hover:opacity-100 transition-opacity duration-300">
+<div class="relative w-40 h-20 bg-white dark:bg-slate-800 rounded-lg border-2 border-slate-300 dark:border-slate-600 shadow-md flex items-center justify-center group cursor-pointer hover:border-primary">
+<span class="font-bold text-slate-800 dark:text-white">Start</span>
+<div class="absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-white border-2 border-primary rounded-full opacity-0 group-hover:opacity-100"></div>
+</div>
+<div class="relative w-24 h-0.5 bg-slate-400 dark:bg-slate-500">
+<div class="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 border-t-2 border-r-2 border-slate-400 dark:border-slate-500 rotate-45 transform translate-x-[-2px]"></div>
+<div class="absolute left-1/2 -top-4 -translate-x-1/2 bg-white dark:bg-slate-800 px-2 py-0.5 text-[10px] text-slate-500 dark:text-slate-400 rounded border border-slate-200 dark:border-slate-700 shadow-sm">
+                        Process
+                    </div>
+</div>
+<div class="relative w-24 h-24 bg-green-100 dark:bg-green-900/30 rounded-full border-2 border-green-500 flex items-center justify-center shadow-md group cursor-pointer">
+<span class="font-bold text-green-800 dark:text-green-300">End</span>
+<div class="absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-white border-2 border-green-500 rounded-full opacity-0 group-hover:opacity-100"></div>
+</div>
+</div>
+<div class="absolute bottom-1/4 right-1/3 transform translate-x-1/2 translate-y-1/4 opacity-80 cursor-pointer group">
+<div class="relative">
+<svg class="text-slate-800 dark:text-slate-300 stroke-current" fill="none" height="200" viewBox="0 0 250 200" width="250" xmlns="http://www.w3.org/2000/svg">
+<path d="M40 160 C 60 100, 100 80, 120 120 S 180 40, 220 60" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"></path>
+<path d="M20 160 H 230" stroke-linecap="round" stroke-width="2"></path>
+<path d="M40 180 V 40" stroke-linecap="round" stroke-width="2"></path>
+<path d="M35 50 L 40 40 L 45 50" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+<path d="M220 155 L 230 160 L 220 165" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<div class="absolute top-0 right-0 -mt-8 font-handwriting text-primary -rotate-12 text-sm font-bold bg-white dark:bg-slate-800 px-2 py-1 shadow-sm rounded-md border border-primary/20">
+                        Growth Spikes!
+                    </div>
+</div>
+</div>
+<div class="absolute top-1/4 right-1/4 transform translate-y-12">
+<span class="material-symbols-outlined text-purple-600 dark:text-purple-400 absolute top-0 left-0 -ml-1 -mt-1 text-[24px]" style="transform: rotate(-15deg);">near_me</span>
+<div class="ml-4 mt-4 px-2 py-0.5 bg-purple-600 text-white text-[10px] font-bold rounded-md shadow-sm whitespace-nowrap">
+                    Sarah M.
+                </div>
+</div>
+</div>
+</div>
+
+</body></html>

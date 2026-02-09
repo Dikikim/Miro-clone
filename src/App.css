@@ -1,0 +1,55 @@
+/* Root element - full viewport for canvas app */
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* Responsive UI scaling based on viewport */
+:root {
+  /* Base tool button size - scales with viewport */
+  --tool-btn-size: clamp(28px, 2.5vw, 40px);
+  --tool-icon-size: clamp(14px, 1.2vw, 20px);
+  --tool-padding: clamp(4px, 0.3vw, 8px);
+  --toolbar-gap: clamp(2px, 0.2vw, 4px);
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
