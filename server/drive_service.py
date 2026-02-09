@@ -2,6 +2,8 @@ import os
 import json
 import pickle
 import base64
+import platform
+import sys
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -47,11 +49,17 @@ class DriveService:
 
     def _initialize_service(self):
         """Initialize the Google Drive API service using OAuth 2.0."""
+        print(f"--- Initializing Drive Service on {platform.system()} ---")
         creds = None
+        
         # The file token.pickle stores the user's access and refresh tokens
         if os.path.exists('token.pickle'):
-            with open('token.pickle', 'rb') as token:
-                creds = pickle.load(token)
+            try:
+                with open('token.pickle', 'rb') as token:
+                    creds = pickle.load(token)
+                print("✓ Loaded credentials from token.pickle")
+            except Exception as e:
+                print(f"✗ Failed to load token.pickle: {e}")
         
         # If there are no (valid) credentials available, let the user log in.
         if not creds or not creds.valid:
@@ -59,25 +67,30 @@ class DriveService:
                 if creds and creds.expired and creds.refresh_token:
                     try:
                         creds.refresh(Request())
+                        print("✓ Refreshed expired token")
                     except Exception as e:
                         print(f"✗ Token refresh failed: {e}")
                         creds = None
 
                 if not creds or not creds.valid:
-                    # Check if running on Render (or if we shouldn't open a browser)
-                    if os.environ.get('RENDER') or os.environ.get('CREDENTIALS_JSON'):
-                        print("⚠ Running in headless mode (Render). Cannot open browser for auth.")
-                        print("  Please ensure TOKEN_PICKLE_B64 is correct and valid.")
+                    # STRICT CHECK: If on Linux (likely Render) or RENDER env var is set
+                    is_headless = (platform.system() == 'Linux') or os.environ.get('RENDER') or os.environ.get('CREDENTIALS_JSON')
+                    
+                    if is_headless:
+                        print("⚠ Running in HEADLESS mode (Linux/Render). Skipping browser auth.")
+                        print(f"  System: {platform.system()}")
+                        print(f"  RENDER env: {os.environ.get('RENDER')}")
+                        print("  Falling back to local storage.")
                         return
                     
-                    # Only run local server if NOT on Render
+                    # Only run local server if NOT headless
                     if os.path.exists(self.credentials_path):
+                        print("○ Attempting interactive browser login...")
                         flow = InstalledAppFlow.from_client_secrets_file(
                             self.credentials_path, SCOPES)
                         creds = flow.run_local_server(port=0)
                     else:
                         print(f"⚠ Credentials file not found: {self.credentials_path}")
-                        print("  Please download OAuth 2.0 Client credentials and save as credentials.json")
                         return
 
                 # Save the credentials for the next run
