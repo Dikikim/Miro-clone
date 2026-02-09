@@ -3,5 +3,5 @@ flask-cors==4.0.0
 google-api-python-client==2.111.0
 google-auth-httplib2==0.2.0
 google-auth-oauthlib
-gunicorn==1.2.0
+gunicorn
 python-dotenv==1.0.0
