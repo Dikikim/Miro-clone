@@ -1,6 +1,7 @@
 import os
 import json
 import pickle
+import base64
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -18,8 +19,32 @@ class DriveService:
         """Initialize the Google Drive service with OAuth 2.0 credentials."""
         self.service = None
         self.credentials_path = credentials_path
+        self._restore_credentials_from_env()
         self._initialize_service()
     
+    def _restore_credentials_from_env(self):
+        """Restore credentials.json and token.pickle from environment variables (for Render)."""
+        # Restore credentials.json
+        creds_json = os.environ.get('CREDENTIALS_JSON')
+        if creds_json and not os.path.exists(self.credentials_path):
+            try:
+                with open(self.credentials_path, 'w') as f:
+                    f.write(creds_json)
+                print("✓ Restored credentials.json from environment variable")
+            except Exception as e:
+                print(f"✗ Failed to restore credentials.json from env: {e}")
+
+        # Restore token.pickle (Base64 encoded)
+        token_b64 = os.environ.get('TOKEN_PICKLE_B64')
+        if token_b64 and not os.path.exists('token.pickle'):
+            try:
+                token_bytes = base64.b64decode(token_b64)
+                with open('token.pickle', 'wb') as f:
+                    f.write(token_bytes)
+                print("✓ Restored token.pickle from environment variable")
+            except Exception as e:
+                print(f"✗ Failed to restore token.pickle from env: {e}")
+
     def _initialize_service(self):
         """Initialize the Google Drive API service using OAuth 2.0."""
         creds = None
