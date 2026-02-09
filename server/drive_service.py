@@ -57,8 +57,20 @@ class DriveService:
         if not creds or not creds.valid:
             try:
                 if creds and creds.expired and creds.refresh_token:
-                    creds.refresh(Request())
-                else:
+                    try:
+                        creds.refresh(Request())
+                    except Exception as e:
+                        print(f"✗ Token refresh failed: {e}")
+                        creds = None
+
+                if not creds or not creds.valid:
+                    # Check if running on Render (or if we shouldn't open a browser)
+                    if os.environ.get('RENDER') or os.environ.get('CREDENTIALS_JSON'):
+                        print("⚠ Running in headless mode (Render). Cannot open browser for auth.")
+                        print("  Please ensure TOKEN_PICKLE_B64 is correct and valid.")
+                        return
+                    
+                    # Only run local server if NOT on Render
                     if os.path.exists(self.credentials_path):
                         flow = InstalledAppFlow.from_client_secrets_file(
                             self.credentials_path, SCOPES)
