@@ -230,12 +230,21 @@ class DriveService:
             print(f"Error finding file: {e}")
             return None
     
+    def _get_local_file_path(self):
+        """Get the absolute path for the local fallback file."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        data_dir = os.path.join(base_dir, 'Data')
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir)
+        return os.path.join(data_dir, 'whiteboard_state.json')
+
     def _save_locally(self, state_data: dict) -> bool:
         """Fallback: save state locally."""
         try:
-            with open('whiteboard_state.json', 'w') as f:
+            file_path = self._get_local_file_path()
+            with open(file_path, 'w') as f:
                 json.dump(state_data, f, indent=2)
-            print("✓ Saved state locally (whiteboard_state.json)")
+            print(f"✓ Saved state locally ({file_path})")
             return True
         except Exception as e:
             print(f"✗ Error saving locally: {e}")
@@ -244,8 +253,9 @@ class DriveService:
     def _load_locally(self) -> dict:
         """Fallback: load state from local file."""
         try:
-            if os.path.exists('whiteboard_state.json'):
-                with open('whiteboard_state.json', 'r') as f:
+            file_path = self._get_local_file_path()
+            if os.path.exists(file_path):
+                with open(file_path, 'r') as f:
                     data = json.load(f)
                 print(f"✓ Loaded state locally ({len(data.get('nodes', []))} nodes)")
                 return data
