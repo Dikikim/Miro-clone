@@ -108,54 +108,21 @@ class DriveService:
     
     def save_whiteboard_state(self, state_data: dict) -> bool:
         """Save whiteboard state as JSON to Google Drive."""
-        if not self.service:
-            print("Drive service not available - saving locally")
-            return self._save_locally(state_data)
+        # TEMPORARY: Force local save (User Request)
+        print("⚠ Google Drive disabled - forcing local save")
+        return self._save_locally(state_data)
         
-        try:
-            file_name = "whiteboard_state.json"
-            json_content = json.dumps(state_data, indent=2)
-            
-            # Check if file already exists
-            existing_file = self._find_file(file_name)
-            
-            media = MediaIoBaseUpload(
-                io.BytesIO(json_content.encode('utf-8')),
-                mimetype='application/json',
-                resumable=True
-            )
-            
-            if existing_file:
-                # Update existing file
-                self.service.files().update(
-                    fileId=existing_file['id'],
-                    media_body=media
-                ).execute()
-                print(f"✓ Updated {file_name} in Google Drive")
-            else:
-                # Create new file
-                file_metadata = {
-                    'name': file_name,
-                    'parents': [DRIVE_FOLDER_ID],
-                    'mimeType': 'application/json'
-                }
-                self.service.files().create(
-                    body=file_metadata,
-                    media_body=media,
-                    fields='id'
-                ).execute()
-                print(f"✓ Created {file_name} in Google Drive")
-            
-            return True
-        except Exception as e:
-            print(f"✗ Error saving to Drive: {e}")
-            return self._save_locally(state_data)
+        # Original code disabled
+        # if not self.service:
     
     def load_whiteboard_state(self) -> dict:
         """Load whiteboard state from Google Drive."""
-        if not self.service:
-            print("Drive service not available - loading locally")
-            return self._load_locally()
+        # TEMPORARY: Force local load (User Request)
+        print("⚠ Google Drive disabled - forcing local load")
+        return self._load_locally()
+
+        # Original code disabled
+        # if not self.service:
         
         try:
             file_name = "whiteboard_state.json"
