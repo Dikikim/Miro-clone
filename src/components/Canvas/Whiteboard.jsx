@@ -133,6 +133,8 @@ export default function Whiteboard() {
     const isDrawing = useRef(false);
     const currentLineId = useRef(null);
     const mouseButtonRef = useRef(0); // Track which mouse button is pressed
+    const isPanning = useRef(false); // Manual canvas panning state
+    const lastPointer = useRef({ x: 0, y: 0 }); // Last pointer position for panning
     const [editingTextId, setEditingTextId] = useState(null);
     const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
     const [drawingShape, setDrawingShape] = useState(null);
@@ -190,12 +192,6 @@ export default function Whiteboard() {
 
         const onEmpty = e.target === e.target.getStage();
 
-        // When using drawing tools, prevent stage from dragging so we can draw
-        if (tool !== 'select' && onEmpty) {
-            const stage = stageRef.current;
-            if (stage) stage.stopDrag();
-        }
-
         const pos = getPos();
         if (!pos) return;
 
@@ -215,7 +211,15 @@ export default function Whiteboard() {
         }
 
         if (!onEmpty) return;
-        if (tool === 'select') { clearSelection(); return; }
+
+        // Clicked on empty canvas
+        if (tool === 'select') {
+            clearSelection();
+            // Start manual panning
+            isPanning.current = true;
+            lastPointer.current = stageRef.current.getPointerPosition();
+            return;
+        }
 
         // Start drawing shape by dragging
         if (tool === 'shape') {
@@ -591,6 +595,24 @@ export default function Whiteboard() {
     }, [tool, shapeType, fillColor, strokeColor, strokeWidth, addNode, updateNode, deleteNode, clearSelection, getPos, nodes, stageScale]);
 
     const handleMouseMove = useCallback((e) => {
+        // Manual panning — move the stage position by the mouse delta
+        if (isPanning.current) {
+            const stage = stageRef.current;
+            if (stage) {
+                const pointer = stage.getPointerPosition();
+                if (pointer) {
+                    const dx = pointer.x - lastPointer.current.x;
+                    const dy = pointer.y - lastPointer.current.y;
+                    const pos = stage.position();
+                    setStagePosition({
+                        x: pos.x + dx,
+                        y: pos.y + dy,
+                    });
+                    lastPointer.current = pointer;
+                }
+            }
+            return;
+        }
         const pos = getPos();
         if (!pos) return;
 
@@ -684,6 +706,7 @@ export default function Whiteboard() {
 
         isDrawing.current = false;
         currentLineId.current = null;
+        isPanning.current = false;
     }, [drawingShape, addNode, fillColor, strokeColor, strokeWidth]);
 
     const handleClick = useCallback((e, id) => {
@@ -1104,18 +1127,8 @@ export default function Whiteboard() {
                     }
                 } else if (tool === 'select') {
                     // Select (highlight) immediately on mousedown so drag is seamless
+                    e.cancelBubble = true; // Prevent stage mousedown from firing
                     selectNode(node.id, e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey || false);
-                    // Stop stage drag so only the object drags, not the canvas
-                    const stage = stageRef.current;
-                    if (stage) stage.stopDrag();
-                }
-            },
-            onDragStart: (e) => {
-                // Check both event button and tracked button
-                const eventButton = e.evt ? e.evt.button : 0;
-                if (eventButton !== 0 || mouseButtonRef.current !== 0) {
-                    e.target.stopDrag();
-                    return;
                 }
             },
             onDragEnd: (e) => handleDragEnd(e, node.id),
@@ -1338,7 +1351,7 @@ export default function Whiteboard() {
                 scaleY={stageScale}
                 x={stagePosition.x}
                 y={stagePosition.y}
-                draggable={true}
+                draggable={false}
                 onWheel={handleWheel}
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
@@ -1347,15 +1360,6 @@ export default function Whiteboard() {
                 onTouchStart={handleMouseDown}
                 onTouchMove={handleMouseMove}
                 onTouchEnd={handleMouseUp}
-                onDragStart={(e) => {
-                    // Only allow stage drag when clicking on empty canvas
-                    // If the click target is a shape/group (not the stage), prevent stage drag
-                    if (e.target !== stageRef.current) {
-                        stageRef.current.stopDrag();
-                        return;
-                    }
-                }}
-                onDragEnd={(e) => { if (e.target === e.target.getStage()) setStagePosition({ x: e.target.x(), y: e.target.y() }); }}
             >
                 <Layer ref={layerRef}>
                     {nodes.map(renderNode)}
