@@ -1084,7 +1084,7 @@ export default function Whiteboard() {
 
         const props = {
             key: node.id, id: node.id,
-            draggable: tool === 'select',
+            draggable: tool === 'select', // Objects draggable in select mode; Konva prioritizes inner element over stage
             listening: !isDrawingTool, // Disable listening when drawing to allow clicks to pass through
             onClick: (e) => handleClick(e, node.id),
             onTap: (e) => handleClick(e, node.id),
@@ -1096,10 +1096,13 @@ export default function Whiteboard() {
                 mouseButtonRef.current = button;
                 if (button !== 0) {
                     e.cancelBubble = true;
-                    // Stop any drag that might have started
                     if (e.target && e.target.stopDrag) {
                         e.target.stopDrag();
                     }
+                } else if (tool === 'select') {
+                    // Stop stage drag so only the object drags, not the canvas
+                    const stage = stageRef.current;
+                    if (stage) stage.stopDrag();
                 }
             },
             onDragStart: (e) => {
