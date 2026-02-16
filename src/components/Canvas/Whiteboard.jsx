@@ -135,6 +135,7 @@ export default function Whiteboard() {
     const mouseButtonRef = useRef(0); // Track which mouse button is pressed
     const isPanning = useRef(false); // Manual canvas panning state
     const lastPointer = useRef({ x: 0, y: 0 }); // Last pointer position for panning
+    const dragStartPositions = useRef({}); // Track initial positions for multi-drag
     const [editingTextId, setEditingTextId] = useState(null);
     const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
     const [drawingShape, setDrawingShape] = useState(null);
@@ -1086,7 +1087,23 @@ export default function Whiteboard() {
         });
     }, [updateNode, stageScale]);
 
-    const handleDragEnd = useCallback((e, id) => updateNode(id, { x: e.target.x(), y: e.target.y() }), [updateNode]);
+    const handleDragEnd = useCallback((e, id) => {
+        // If this node is part of a multi-selection, update all selected nodes
+        if (selectedNodeIds.length > 1 && selectedNodeIds.includes(id)) {
+            const layer = layerRef.current;
+            if (layer) {
+                selectedNodeIds.forEach((nodeId) => {
+                    const konvaNode = layer.findOne(`#${nodeId}`);
+                    if (konvaNode) {
+                        updateNode(nodeId, { x: konvaNode.x(), y: konvaNode.y() });
+                    }
+                });
+            }
+        } else {
+            updateNode(id, { x: e.target.x(), y: e.target.y() });
+        }
+        dragStartPositions.current = {};
+    }, [updateNode, selectedNodeIds]);
 
     const handleTransformEnd = useCallback((e, id, type) => {
         const n = e.target;
@@ -1129,6 +1146,45 @@ export default function Whiteboard() {
                     // Select (highlight) immediately on mousedown so drag is seamless
                     e.cancelBubble = true; // Prevent stage mousedown from firing
                     selectNode(node.id, e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey || false);
+                }
+            },
+            onDragStart: (e) => {
+                // Record starting positions of ALL selected nodes for group drag
+                if (selectedNodeIds.length > 1 && selectedNodeIds.includes(node.id)) {
+                    const layer = layerRef.current;
+                    if (layer) {
+                        const positions = {};
+                        selectedNodeIds.forEach((id) => {
+                            const konvaNode = layer.findOne(`#${id}`);
+                            if (konvaNode) {
+                                positions[id] = { x: konvaNode.x(), y: konvaNode.y() };
+                            }
+                        });
+                        dragStartPositions.current = positions;
+                    }
+                }
+            },
+            onDragMove: (e) => {
+                // Move all other selected nodes by the same delta
+                const positions = dragStartPositions.current;
+                if (Object.keys(positions).length > 1 && selectedNodeIds.includes(node.id)) {
+                    const draggedStart = positions[node.id];
+                    if (!draggedStart) return;
+                    const dx = e.target.x() - draggedStart.x;
+                    const dy = e.target.y() - draggedStart.y;
+                    const layer = layerRef.current;
+                    if (layer) {
+                        selectedNodeIds.forEach((id) => {
+                            if (id !== node.id && positions[id]) {
+                                const konvaNode = layer.findOne(`#${id}`);
+                                if (konvaNode) {
+                                    konvaNode.x(positions[id].x + dx);
+                                    konvaNode.y(positions[id].y + dy);
+                                }
+                            }
+                        });
+                        layer.batchDraw();
+                    }
                 }
             },
             onDragEnd: (e) => handleDragEnd(e, node.id),
