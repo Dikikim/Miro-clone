@@ -29,13 +29,14 @@ function YoutubeNode({ node, commonProps }) {
     return (
         <Group {...commonProps} x={node.x} y={node.y}>
             {/* Background */}
-            <Rect width={node.width} height={node.height} fill="#0f0f0f" cornerRadius={12} />
+            <Rect listening={false} width={node.width} height={node.height} fill="#0f0f0f" cornerRadius={12} />
 
             {/* Thumbnail image */}
-            {image && <KonvaImage image={image} width={node.width} height={node.height} cornerRadius={12} />}
+            {image && <KonvaImage listening={false} image={image} width={node.width} height={node.height} cornerRadius={12} />}
 
             {/* YouTube play button - red rounded rectangle */}
             <Rect
+                listening={false}
                 x={cx - playBtnW / 2}
                 y={cy - playBtnH / 2}
                 width={playBtnW}
@@ -49,14 +50,15 @@ function YoutubeNode({ node, commonProps }) {
 
             {/* Play triangle */}
             <Line
+                listening={false}
                 points={[cx - 10, cy - 12, cx - 10, cy + 12, cx + 14, cy]}
                 fill="white"
                 closed
             />
 
             {/* "Double-click to play" hint */}
-            <Rect x={10} y={node.height - 32} width={node.width - 20} height={22} fill="rgba(0,0,0,0.7)" cornerRadius={4} />
-            <Text x={10} y={node.height - 28} width={node.width - 20} text="🎬 Double-click to play" fontSize={12} fill="#fff" align="center" />
+            <Rect listening={false} x={10} y={node.height - 32} width={node.width - 20} height={22} fill="rgba(0,0,0,0.7)" cornerRadius={4} />
+            <Text listening={false} x={10} y={node.height - 28} width={node.width - 20} text="🎬 Double-click to play" fontSize={12} fill="#fff" align="center" />
         </Group>
     );
 }
@@ -70,19 +72,19 @@ function AudioNode({ node, commonProps }) {
     return (
         <Group {...commonProps} x={node.x} y={node.y}>
             {/* Background card */}
-            <Rect width={w} height={h} fill="#ffffff" stroke="#e5e7eb" strokeWidth={1} cornerRadius={12} shadowColor="black" shadowBlur={8} shadowOpacity={0.1} />
+            <Rect listening={false} width={w} height={h} fill="#ffffff" stroke="#e5e7eb" strokeWidth={1} cornerRadius={12} shadowColor="black" shadowBlur={8} shadowOpacity={0.1} />
 
             {/* Music icon circle */}
-            <Circle x={40} y={h / 2} radius={iconSize / 2 + 8} fill="#8b5cf6" />
+            <Circle listening={false} x={40} y={h / 2} radius={iconSize / 2 + 8} fill="#8b5cf6" />
 
             {/* Music note icon (simplified) */}
-            <Text x={28} y={h / 2 - 10} text="♪" fontSize={24} fill="white" />
+            <Text listening={false} x={28} y={h / 2 - 10} text="♪" fontSize={24} fill="white" />
 
             {/* File name */}
-            <Text x={75} y={h / 2 - 16} text={fileName.length > 30 ? fileName.substring(0, 30) + '...' : fileName} fontSize={14} fill="#1f2937" fontStyle="bold" />
+            <Text listening={false} x={75} y={h / 2 - 16} text={fileName.length > 30 ? fileName.substring(0, 30) + '...' : fileName} fontSize={14} fill="#1f2937" fontStyle="bold" />
 
             {/* Double-click hint */}
-            <Text x={75} y={h / 2 + 6} text="🎧 Double-click to play" fontSize={11} fill="#6b7280" />
+            <Text listening={false} x={75} y={h / 2 + 6} text="🎧 Double-click to play" fontSize={11} fill="#6b7280" />
         </Group>
     );
 }
@@ -96,29 +98,30 @@ function VideoNode({ node, commonProps }) {
     return (
         <Group {...commonProps} x={node.x} y={node.y}>
             {/* Background */}
-            <Rect width={w} height={h} fill="#1f2937" cornerRadius={12} />
+            <Rect listening={false} width={w} height={h} fill="#1f2937" cornerRadius={12} />
 
             {/* Video preview gradient overlay */}
-            <Rect width={w} height={h} fill="#374151" cornerRadius={12} />
+            <Rect listening={false} width={w} height={h} fill="#374151" cornerRadius={12} />
 
             {/* Play button circle */}
-            <Circle x={w / 2} y={h / 2} radius={playBtnSize / 2} fill="rgba(255,255,255,0.9)" shadowColor="black" shadowBlur={10} shadowOpacity={0.3} />
+            <Circle listening={false} x={w / 2} y={h / 2} radius={playBtnSize / 2} fill="rgba(255,255,255,0.9)" shadowColor="black" shadowBlur={10} shadowOpacity={0.3} />
 
             {/* Play triangle */}
             <Line
+                listening={false}
                 points={[w / 2 - 8, h / 2 - 12, w / 2 - 8, h / 2 + 12, w / 2 + 14, h / 2]}
                 fill="#1f2937"
                 closed
             />
 
             {/* Video icon badge */}
-            <Rect x={10} y={10} width={28} height={28} fill="#ef4444" cornerRadius={6} />
-            <Text x={15} y={14} text="▶" fontSize={16} fill="white" />
+            <Rect listening={false} x={10} y={10} width={28} height={28} fill="#ef4444" cornerRadius={6} />
+            <Text listening={false} x={15} y={14} text="▶" fontSize={16} fill="white" />
 
             {/* File name and hint at bottom */}
-            <Rect x={0} y={h - 36} width={w} height={36} fill="rgba(0,0,0,0.7)" cornerRadius={[0, 0, 12, 12]} />
-            <Text x={12} y={h - 30} text={fileName.length > 35 ? fileName.substring(0, 35) + '...' : fileName} fontSize={11} fill="#ffffff" width={w - 24} />
-            <Text x={12} y={h - 14} text="🎬 Double-click to play" fontSize={10} fill="#9ca3af" />
+            <Rect listening={false} x={0} y={h - 36} width={w} height={36} fill="rgba(0,0,0,0.7)" cornerRadius={[0, 0, 12, 12]} />
+            <Text listening={false} x={12} y={h - 30} text={fileName.length > 35 ? fileName.substring(0, 35) + '...' : fileName} fontSize={11} fill="#ffffff" width={w - 24} />
+            <Text listening={false} x={12} y={h - 14} text="🎬 Double-click to play" fontSize={10} fill="#9ca3af" />
         </Group>
     );
 }
