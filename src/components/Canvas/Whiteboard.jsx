@@ -1103,6 +1103,8 @@ export default function Whiteboard() {
                         e.target.stopDrag();
                     }
                 } else if (tool === 'select') {
+                    // Select (highlight) immediately on mousedown so drag is seamless
+                    selectNode(node.id, e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey || false);
                     // Stop stage drag so only the object drags, not the canvas
                     const stage = stageRef.current;
                     if (stage) stage.stopDrag();
