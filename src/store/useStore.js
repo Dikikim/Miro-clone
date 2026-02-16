@@ -56,6 +56,28 @@ const loadMediaFromDB = async (nodeId) => {
 // Strips large data URLs from nodes to stay within localStorage quota
 const LARGE_SRC_THRESHOLD = 100_000; // 100KB
 
+// Synchronous save — used on beforeunload and after every mutation
+// Skips IndexedDB (async) but still saves node metadata
+const saveToLocalStorageSync = (state) => {
+    try {
+        const nodesForStorage = state.nodes.map((node) => {
+            if (node.src && node.src.length > LARGE_SRC_THRESHOLD) {
+                return { ...node, src: `__idb__${node.id}` };
+            }
+            return node;
+        });
+        const data = {
+            nodes: nodesForStorage,
+            stagePosition: state.stagePosition,
+            stageScale: state.stageScale,
+        };
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {
+        console.error('✗ localStorage sync save error:', e);
+    }
+};
+
+// Async save — also persists large media to IndexedDB
 const saveToLocalStorage = async (state) => {
     try {
         // Separate large media src data into IndexedDB
@@ -73,7 +95,7 @@ const saveToLocalStorage = async (state) => {
             stageScale: state.stageScale,
         };
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
-        console.log('✓ Saved to localStorage');
+        console.log('✓ Saved to localStorage + IndexedDB');
     } catch (e) {
         console.error('✗ localStorage save error:', e);
     }
@@ -158,6 +180,7 @@ const useStore = create((set, get) => ({
         const newIndex = historyIndex - 1;
         const snapshot = JSON.parse(JSON.stringify(history[newIndex]));
         set({ nodes: snapshot, historyIndex: newIndex, selectedNodeIds: [], hasUnsavedChanges: true });
+        saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
 
@@ -167,6 +190,7 @@ const useStore = create((set, get) => ({
         const newIndex = historyIndex + 1;
         const snapshot = JSON.parse(JSON.stringify(history[newIndex]));
         set({ nodes: snapshot, historyIndex: newIndex, selectedNodeIds: [], hasUnsavedChanges: true });
+        saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
 
@@ -183,6 +207,7 @@ const useStore = create((set, get) => ({
         get().pushToHistory();
         const newNode = { id: uuidv4(), ...nodeData };
         set((state) => ({ nodes: [...state.nodes, newNode], hasUnsavedChanges: true }));
+        saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
         return newNode.id;
     },
@@ -195,6 +220,7 @@ const useStore = create((set, get) => ({
             ),
             hasUnsavedChanges: true,
         }));
+        saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
 
@@ -205,6 +231,7 @@ const useStore = create((set, get) => ({
             selectedNodeIds: state.selectedNodeIds.filter((nodeId) => nodeId !== id),
             hasUnsavedChanges: true,
         }));
+        saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
 
@@ -240,12 +267,14 @@ const useStore = create((set, get) => ({
             selectedNodeIds: [],
             hasUnsavedChanges: true,
         }));
+        saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
 
     deleteAllNodes: () => {
         get().pushToHistory();
         set({ nodes: [], selectedNodeIds: [], hasUnsavedChanges: true });
+        saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
 
@@ -343,5 +372,13 @@ const useStore = create((set, get) => ({
         set({ isLoading: false });
     },
 }));
+
+// Emergency save on page close/refresh — synchronous, guaranteed to run
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        const state = useStore.getState();
+        saveToLocalStorageSync(state);
+    });
+}
 
 export default useStore;
