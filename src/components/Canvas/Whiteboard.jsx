@@ -713,15 +713,15 @@ export default function Whiteboard() {
         // Only respond to left mouse button
         if (e.evt && e.evt.button !== 0) return;
         e.cancelBubble = true;
-        if (tool === 'select') {
-            selectNode(id, e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey || false);
-        } else if (tool === 'eraser') {
+        // Selection is handled in onMouseDown for instant feedback.
+        // handleClick only handles tool-specific actions like eraser.
+        if (tool === 'eraser') {
             const nodeData = nodes.find(n => n.id === id);
             if (nodeData && nodeData.type === 'line') {
                 deleteNode(id);
             }
         }
-    }, [selectNode, deleteNode, tool, nodes]);
+    }, [deleteNode, tool, nodes]);
 
     const handleDblClick = useCallback((e, node) => {
         // Only respond to left mouse button

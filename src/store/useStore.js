@@ -7,7 +7,7 @@ const MAX_HISTORY = 50;
 
 // Debounce helper
 let saveTimeout = null;
-const debounceSave = (fn, delay = 2000) => {
+const debounceSave = (fn, delay = 500) => {
     if (saveTimeout) clearTimeout(saveTimeout);
     saveTimeout = setTimeout(fn, delay);
 };
