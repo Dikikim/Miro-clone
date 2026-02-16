@@ -107,22 +107,55 @@ class DriveService:
             print(f"✗ Failed to initialize Drive service: {e}")
     
     def save_whiteboard_state(self, state_data: dict) -> bool:
-        """Save whiteboard state as JSON to Google Drive."""
-        # TEMPORARY: Force local save (User Request)
-        print("⚠ Google Drive disabled - forcing local save")
-        return self._save_locally(state_data)
+        """Save whiteboard state to Google Drive, falling back to local."""
+        if not self.service:
+            print("⚠ Google Drive service not available — saving locally")
+            return self._save_locally(state_data)
         
-        # Original code disabled
-        # if not self.service:
+        try:
+            file_name = "whiteboard_state.json"
+            state_json = json.dumps(state_data)
+            
+            # Check if file already exists
+            existing_file = self._find_file(file_name)
+            
+            media = MediaIoBaseUpload(
+                io.BytesIO(state_json.encode('utf-8')),
+                mimetype='application/json',
+                resumable=True
+            )
+            
+            if existing_file:
+                # Update existing file
+                self.service.files().update(
+                    fileId=existing_file['id'],
+                    media_body=media
+                ).execute()
+            else:
+                # Create new file
+                file_metadata = {
+                    'name': file_name,
+                    'parents': [DRIVE_FOLDER_ID]
+                }
+                self.service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id'
+                ).execute()
+            
+            # Also save locally as backup
+            self._save_locally(state_data)
+            print(f"✓ Saved state to Google Drive ({len(state_data.get('nodes', []))} nodes)")
+            return True
+        except Exception as e:
+            print(f"✗ Error saving to Drive: {e}")
+            return self._save_locally(state_data)
     
     def load_whiteboard_state(self) -> dict:
-        """Load whiteboard state from Google Drive."""
-        # TEMPORARY: Force local load (User Request)
-        print("⚠ Google Drive disabled - forcing local load")
-        return self._load_locally()
-
-        # Original code disabled
-        # if not self.service:
+        """Load whiteboard state from Google Drive, falling back to local."""
+        if not self.service:
+            print("⚠ Google Drive service not available — loading locally")
+            return self._load_locally()
         
         try:
             file_name = "whiteboard_state.json"

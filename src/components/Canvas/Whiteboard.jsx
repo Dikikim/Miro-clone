@@ -186,6 +186,13 @@ export default function Whiteboard() {
         if (e.evt && e.evt.button !== 0) return;
 
         const onEmpty = e.target === e.target.getStage();
+
+        // When using drawing tools, prevent stage from dragging so we can draw
+        if (tool !== 'select' && onEmpty) {
+            const stage = stageRef.current;
+            if (stage) stage.stopDrag();
+        }
+
         const pos = getPos();
         if (!pos) return;
 
@@ -681,7 +688,7 @@ export default function Whiteboard() {
         if (e.evt && e.evt.button !== 0) return;
         e.cancelBubble = true;
         if (tool === 'select') {
-            selectNode(id, e.evt?.shiftKey || false);
+            selectNode(id, e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey || false);
         } else if (tool === 'eraser') {
             const nodeData = nodes.find(n => n.id === id);
             if (nodeData && nodeData.type === 'line') {
@@ -1323,7 +1330,7 @@ export default function Whiteboard() {
                 scaleY={stageScale}
                 x={stagePosition.x}
                 y={stagePosition.y}
-                draggable={tool === 'select'}
+                draggable={true}
                 onWheel={handleWheel}
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}

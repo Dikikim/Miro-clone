@@ -15,7 +15,8 @@ import useStore from './store/useStore';
 function App() {
   const {
     tool, setTool, deleteSelectedNodes, selectedNodeIds, clearSelection,
-    loadFromCloud, isSaving, lastSaved, isLoading
+    loadFromCloud, isSaving, lastSaved, isLoading,
+    undo, redo, setOnline, syncSave,
   } = useStore();
   const [showImageUploader, setShowImageUploader] = useState(false);
   const [showYoutubeEmbed, setShowYoutubeEmbed] = useState(false);
@@ -30,6 +31,25 @@ function App() {
   useEffect(() => {
     loadFromCloud();
   }, [loadFromCloud]);
+
+  // Online/offline detection — sync when coming back online
+  useEffect(() => {
+    const handleOnline = () => {
+      setOnline(true);
+      console.log('🌐 Back online — syncing to cloud...');
+      syncSave();
+    };
+    const handleOffline = () => {
+      setOnline(false);
+      console.log('📴 Went offline — saving locally only');
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [setOnline, syncSave]);
 
   // Expose functions globally for Whiteboard to trigger playback
   useEffect(() => {
@@ -71,6 +91,24 @@ function App() {
     const handleKeyDown = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
+      // Undo/Redo keyboard shortcuts
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'z' || e.key === 'Z') {
+          e.preventDefault();
+          if (e.shiftKey) {
+            redo();
+          } else {
+            undo();
+          }
+          return;
+        }
+        if (e.key === 'y' || e.key === 'Y') {
+          e.preventDefault();
+          redo();
+          return;
+        }
+      }
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
         handleDelete();
@@ -103,7 +141,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setTool, handleDelete, clearSelection]);
+  }, [setTool, handleDelete, clearSelection, undo, redo]);
 
   return (
     <div className="w-full h-full relative light" style={{ backgroundColor: '#f5f6f8' }}>

@@ -47,7 +47,8 @@ export default function Toolbar() {
         strokeColor, setStrokeColor, strokeWidth, setStrokeWidth,
         textColor, setTextColor,
         nodes, selectedNodeIds, deleteAllNodes, deleteSelectedNodes,
-        isSaving, isLoading, lastSaved
+        isSaving, isLoading, lastSaved,
+        undo, redo, canUndo, canRedo,
     } = useStore();
 
     const [activePopup, setActivePopup] = useState(null);
@@ -185,22 +186,36 @@ export default function Toolbar() {
 
                 {/* Undo/Redo */}
                 <button
-                    className="flex items-center justify-center rounded-lg transition-colors text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                    onClick={() => undo()}
+                    disabled={!canUndo()}
+                    className={cn(
+                        "flex items-center justify-center rounded-lg transition-colors",
+                        canUndo()
+                            ? "text-gray-600 hover:text-gray-800 hover:bg-gray-100"
+                            : "text-gray-300 cursor-not-allowed"
+                    )}
                     style={{
                         width: 'clamp(28px, 2.5vw + 1vh, 42px)',
                         height: 'clamp(28px, 2.5vw + 1vh, 42px)',
                     }}
-                    title="Undo"
+                    title="Undo (Ctrl+Z)"
                 >
                     <Undo2 style={{ width: 'clamp(14px, 1.2vw + 0.5vh, 22px)', height: 'clamp(14px, 1.2vw + 0.5vh, 22px)' }} />
                 </button>
                 <button
-                    className="flex items-center justify-center rounded-lg transition-colors text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                    onClick={() => redo()}
+                    disabled={!canRedo()}
+                    className={cn(
+                        "flex items-center justify-center rounded-lg transition-colors",
+                        canRedo()
+                            ? "text-gray-600 hover:text-gray-800 hover:bg-gray-100"
+                            : "text-gray-300 cursor-not-allowed"
+                    )}
                     style={{
                         width: 'clamp(28px, 2.5vw + 1vh, 42px)',
                         height: 'clamp(28px, 2.5vw + 1vh, 42px)',
                     }}
-                    title="Redo"
+                    title="Redo (Ctrl+Y)"
                 >
                     <Redo2 style={{ width: 'clamp(14px, 1.2vw + 0.5vh, 22px)', height: 'clamp(14px, 1.2vw + 0.5vh, 22px)' }} />
                 </button>

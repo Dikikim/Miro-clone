@@ -1,6 +1,9 @@
 const MAX_FILE_SIZE_MB = 250;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
+// Max size for base64 encoding (50MB) — larger files stay as blob URLs
+const MAX_BASE64_SIZE_BYTES = 50 * 1024 * 1024;
+
 /**
  * Validates that a file is within the allowed size limit.
  * @param {File} file - The file to validate.
@@ -17,9 +20,10 @@ export function validateFileSize(file) {
 }
 
 /**
- * Creates a local URL for an uploaded file.
+ * Creates a persistent data URL for a file (base64-encoded).
+ * Falls back to blob URL for very large files.
  * @param {File} file - The file to process.
- * @returns {Promise<string>} - Object URL for the file.
+ * @returns {Promise<string>} - Data URL or Object URL for the file.
  */
 export function handleFileUpload(file) {
     return new Promise((resolve, reject) => {
@@ -28,8 +32,21 @@ export function handleFileUpload(file) {
             reject(new Error(validation.message));
             return;
         }
-        const url = URL.createObjectURL(file);
-        resolve(url);
+
+        // For files under 50MB, convert to base64 data URL so they persist across sessions
+        if (file.size <= MAX_BASE64_SIZE_BYTES) {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => {
+                // Fallback to blob URL if FileReader fails
+                resolve(URL.createObjectURL(file));
+            };
+            reader.readAsDataURL(file);
+        } else {
+            // For very large files, use blob URL (won't survive page reload)
+            const url = URL.createObjectURL(file);
+            resolve(url);
+        }
     });
 }
 
