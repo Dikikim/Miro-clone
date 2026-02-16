@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || '';  // Empty = local-only, no cloud sync
 const LOCAL_STORAGE_KEY = 'miro_clone_state';
 const MAX_HISTORY = 50;
 
@@ -255,15 +255,13 @@ const useStore = create((set, get) => ({
     // --- Unified save: always localStorage, optionally cloud ---
     syncSave: async () => {
         const state = get();
-        // Always save to localStorage
+        // Always save to localStorage + IndexedDB on PC
         await saveToLocalStorage(state);
+        set({ hasUnsavedChanges: false, lastSaved: new Date().toISOString() });
 
-        // If online, also push to cloud
-        if (state.isOnline) {
+        // Only attempt cloud if API_URL is explicitly configured
+        if (API_URL && state.isOnline) {
             await get().saveToCloud();
-        } else {
-            console.log('⚠ Offline — saved to localStorage only');
-            set({ hasUnsavedChanges: false, lastSaved: new Date().toISOString() });
         }
     },
 
@@ -303,8 +301,8 @@ const useStore = create((set, get) => ({
     loadFromCloud: async () => {
         set({ isLoading: true, cloudError: null });
 
-        // Try cloud first if online
-        if (get().isOnline) {
+        // Only try cloud if API_URL is explicitly configured and online
+        if (API_URL && get().isOnline) {
             try {
                 const response = await fetch(`${API_URL}/load`);
                 if (response.ok) {
@@ -317,7 +315,6 @@ const useStore = create((set, get) => ({
                         history: [JSON.parse(JSON.stringify(nodes))],
                         historyIndex: 0,
                     });
-                    // Also persist to localStorage so offline has latest
                     await saveToLocalStorage(get());
                     console.log(`✓ Loaded ${nodes.length} nodes from cloud`);
                     set({ isLoading: false });
