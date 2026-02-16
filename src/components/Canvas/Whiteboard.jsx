@@ -1347,6 +1347,14 @@ export default function Whiteboard() {
                 onTouchStart={handleMouseDown}
                 onTouchMove={handleMouseMove}
                 onTouchEnd={handleMouseUp}
+                onDragStart={(e) => {
+                    // Only allow stage drag when clicking on empty canvas
+                    // If the click target is a shape/group (not the stage), prevent stage drag
+                    if (e.target !== stageRef.current) {
+                        stageRef.current.stopDrag();
+                        return;
+                    }
+                }}
                 onDragEnd={(e) => { if (e.target === e.target.getStage()) setStagePosition({ x: e.target.x(), y: e.target.y() }); }}
             >
                 <Layer ref={layerRef}>
