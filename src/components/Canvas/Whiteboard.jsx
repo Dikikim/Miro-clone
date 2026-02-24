@@ -1,6 +1,7 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { Stage, Layer, Rect, Circle, Ellipse, Text, Transformer, Image as KonvaImage, Group, Line, RegularPolygon, Arrow, Star as KonvaStar, Shape } from 'react-konva';
 import useStore from '../../store/useStore';
+import PdfOverlay from './PdfOverlay';
 
 function useImage(src) {
     const [image, setImage] = useState(null);
@@ -29,7 +30,7 @@ function YoutubeNode({ node, commonProps }) {
     return (
         <Group {...commonProps} x={node.x} y={node.y}>
             {/* Background */}
-            <Rect listening={false} width={node.width} height={node.height} fill="#0f0f0f" cornerRadius={12} />
+            <Rect width={node.width} height={node.height} fill="#0f0f0f" cornerRadius={12} />
 
             {/* Thumbnail image */}
             {image && <KonvaImage listening={false} image={image} width={node.width} height={node.height} cornerRadius={12} />}
@@ -72,7 +73,7 @@ function AudioNode({ node, commonProps }) {
     return (
         <Group {...commonProps} x={node.x} y={node.y}>
             {/* Background card */}
-            <Rect listening={false} width={w} height={h} fill="#ffffff" stroke="#e5e7eb" strokeWidth={1} cornerRadius={12} shadowColor="black" shadowBlur={8} shadowOpacity={0.1} />
+            <Rect width={w} height={h} fill="#ffffff" stroke="#e5e7eb" strokeWidth={1} cornerRadius={12} shadowColor="black" shadowBlur={8} shadowOpacity={0.1} />
 
             {/* Music icon circle */}
             <Circle listening={false} x={40} y={h / 2} radius={iconSize / 2 + 8} fill="#8b5cf6" />
@@ -98,7 +99,7 @@ function VideoNode({ node, commonProps }) {
     return (
         <Group {...commonProps} x={node.x} y={node.y}>
             {/* Background */}
-            <Rect listening={false} width={w} height={h} fill="#1f2937" cornerRadius={12} />
+            <Rect width={w} height={h} fill="#1f2937" cornerRadius={12} />
 
             {/* Video preview gradient overlay */}
             <Rect listening={false} width={w} height={h} fill="#374151" cornerRadius={12} />
@@ -122,6 +123,31 @@ function VideoNode({ node, commonProps }) {
             <Rect listening={false} x={0} y={h - 36} width={w} height={36} fill="rgba(0,0,0,0.7)" cornerRadius={[0, 0, 12, 12]} />
             <Text listening={false} x={12} y={h - 30} text={fileName.length > 35 ? fileName.substring(0, 35) + '...' : fileName} fontSize={11} fill="#ffffff" width={w - 24} />
             <Text listening={false} x={12} y={h - 14} text="🎬 Double-click to play" fontSize={10} fill="#9ca3af" />
+        </Group>
+    );
+}
+
+function PdfDocumentNode({ node, commonProps }) {
+    const image = useImage(node.coverSrc);
+    const w = node.width || 300;
+    const h = node.height || 400;
+
+    return (
+        <Group {...commonProps} x={node.x} y={node.y}>
+            {/* Shadow/background */}
+            <Rect width={w} height={h} fill="#ffffff" stroke="#d1d5db" strokeWidth={1} cornerRadius={4}
+                shadowColor="black" shadowBlur={12} shadowOpacity={0.15} shadowOffsetY={4} />
+
+            {/* Cover image */}
+            {image && <KonvaImage listening={false} image={image} width={w} height={h} cornerRadius={4} />}
+
+            {/* If no image yet, show placeholder */}
+            {!image && (
+                <>
+                    <Rect width={w} height={h} fill="#f3f4f6" cornerRadius={4} />
+                    <Text listening={false} x={w / 2 - 30} y={h / 2 - 10} text="📄 PDF" fontSize={18} fill="#9ca3af" />
+                </>
+            )}
         </Group>
     );
 }
@@ -1110,7 +1136,7 @@ export default function Whiteboard() {
         const sx = n.scaleX(), sy = n.scaleY();
         n.scaleX(1); n.scaleY(1);
 
-        if (type === 'rectangle' || type === 'image' || type === 'youtube' || type === 'diamond' || type === 'audio' || type === 'video') {
+        if (type === 'rectangle' || type === 'image' || type === 'youtube' || type === 'diamond' || type === 'audio' || type === 'video' || type === 'pdf') {
             updateNode(id, { x: n.x(), y: n.y(), width: Math.max(20, n.width() * sx), height: Math.max(20, n.height() * sy) });
         } else if (type === 'circle' || type === 'triangle' || type === 'hexagon') {
             updateNode(id, { x: n.x(), y: n.y(), radius: Math.max(10, n.radius() * Math.max(sx, sy)) });
@@ -1299,6 +1325,8 @@ export default function Whiteboard() {
                 return <AudioNode key={node.id} node={node} commonProps={props} />;
             case 'video':
                 return <VideoNode key={node.id} node={node} commonProps={props} />;
+            case 'pdf':
+                return <PdfDocumentNode key={node.id} node={node} commonProps={props} />;
             default:
                 return null;
         }
@@ -1433,6 +1461,32 @@ export default function Whiteboard() {
                     />
                 </Layer>
             </Stage>
+            {/* PDF overlay toolbars — HTML positioned over the canvas */}
+            <PdfOverlays />
         </div>
+    );
+}
+
+/**
+ * Wrapper that renders PdfOverlay components for each pdf node.
+ * Rendered as a sibling to the Konva Stage div.
+ */
+function PdfOverlays() {
+    const { nodes, stagePosition, stageScale } = useStore();
+    const pdfNodes = nodes.filter(n => n.type === 'pdf');
+
+    if (pdfNodes.length === 0) return null;
+
+    return (
+        <>
+            {pdfNodes.map(node => (
+                <PdfOverlay
+                    key={node.id}
+                    node={node}
+                    stagePosition={stagePosition}
+                    stageScale={stageScale}
+                />
+            ))}
+        </>
     );
 }

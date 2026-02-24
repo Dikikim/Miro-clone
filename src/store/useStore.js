@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 
-const API_URL = import.meta.env.VITE_API_URL || '';  // Empty = local-only, no cloud sync
 const LOCAL_STORAGE_KEY = 'miro_clone_state';
 const MAX_HISTORY = 50;
 
@@ -61,10 +60,20 @@ const LARGE_SRC_THRESHOLD = 100_000; // 100KB
 const saveToLocalStorageSync = (state) => {
     try {
         const nodesForStorage = state.nodes.map((node) => {
-            if (node.src && node.src.length > LARGE_SRC_THRESHOLD) {
-                return { ...node, src: `__idb__${node.id}` };
+            let result = node;
+            if (result.src && result.src.length > LARGE_SRC_THRESHOLD) {
+                if (!result.src.startsWith('__idb__')) {
+                    saveMediaToDB(result.id, result.src).catch(e => console.error('IDB sync error:', e));
+                }
+                result = { ...result, src: `__idb__${result.id}` };
             }
-            return node;
+            if (result.coverSrc && result.coverSrc.length > LARGE_SRC_THRESHOLD) {
+                if (!result.coverSrc.startsWith('__idb__')) {
+                    saveMediaToDB(`${result.id}_cover`, result.coverSrc).catch(e => console.error('IDB sync error:', e));
+                }
+                result = { ...result, coverSrc: `__idb__${result.id}_cover` };
+            }
+            return result;
         });
         const data = {
             nodes: nodesForStorage,
@@ -80,13 +89,17 @@ const saveToLocalStorageSync = (state) => {
 // Async save — also persists large media to IndexedDB
 const saveToLocalStorage = async (state) => {
     try {
-        // Separate large media src data into IndexedDB
         const nodesForStorage = await Promise.all(state.nodes.map(async (node) => {
-            if (node.src && node.src.length > LARGE_SRC_THRESHOLD) {
-                await saveMediaToDB(node.id, node.src);
-                return { ...node, src: `__idb__${node.id}` };
+            let result = node;
+            if (result.src && result.src.length > LARGE_SRC_THRESHOLD) {
+                await saveMediaToDB(result.id, result.src);
+                result = { ...result, src: `__idb__${result.id}` };
             }
-            return node;
+            if (result.coverSrc && result.coverSrc.length > LARGE_SRC_THRESHOLD) {
+                await saveMediaToDB(`${result.id}_cover`, result.coverSrc);
+                result = { ...result, coverSrc: `__idb__${result.id}_cover` };
+            }
+            return result;
         }));
 
         const data = {
@@ -106,15 +119,20 @@ const loadFromLocalStorage = async () => {
         const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
         if (raw) {
             const data = JSON.parse(raw);
-            // Rehydrate large media sources from IndexedDB
             if (data.nodes) {
                 data.nodes = await Promise.all(data.nodes.map(async (node) => {
-                    if (node.src && typeof node.src === 'string' && node.src.startsWith('__idb__')) {
-                        const nodeId = node.src.replace('__idb__', '');
-                        const src = await loadMediaFromDB(nodeId);
-                        return { ...node, src: src || '' };
+                    let result = node;
+                    if (result.src && typeof result.src === 'string' && result.src.startsWith('__idb__')) {
+                        const key = result.src.replace('__idb__', '');
+                        const src = await loadMediaFromDB(key);
+                        result = { ...result, src: src || '' };
                     }
-                    return node;
+                    if (result.coverSrc && typeof result.coverSrc === 'string' && result.coverSrc.startsWith('__idb__')) {
+                        const key = result.coverSrc.replace('__idb__', '');
+                        const coverSrc = await loadMediaFromDB(key);
+                        result = { ...result, coverSrc: coverSrc || '' };
+                    }
+                    return result;
                 }));
             }
             console.log(`✓ Loaded ${data.nodes?.length || 0} nodes from localStorage`);
@@ -147,13 +165,11 @@ const useStore = create((set, get) => ({
     history: [],
     historyIndex: -1,
 
-    // Cloud sync state
+    // Save state
     isSaving: false,
     isLoading: false,
     lastSaved: null,
-    cloudError: null,
     hasUnsavedChanges: false,
-    isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
 
     // --- Computed helpers ---
     canUndo: () => get().historyIndex > 0,
@@ -162,8 +178,8 @@ const useStore = create((set, get) => ({
     // --- History management ---
     pushToHistory: () => {
         const { nodes, history, historyIndex } = get();
-        // Deep clone current nodes
-        const snapshot = JSON.parse(JSON.stringify(nodes));
+        // Shallow clone avoiding deep copy of base64 strings
+        const snapshot = nodes.map(node => (node.points ? { ...node, points: [...node.points] } : { ...node }));
         // Discard any future states if we branched
         const newHistory = history.slice(0, historyIndex + 1);
         newHistory.push(snapshot);
@@ -178,7 +194,7 @@ const useStore = create((set, get) => ({
         const { history, historyIndex } = get();
         if (historyIndex <= 0) return;
         const newIndex = historyIndex - 1;
-        const snapshot = JSON.parse(JSON.stringify(history[newIndex]));
+        const snapshot = history[newIndex].map(node => (node.points ? { ...node, points: [...node.points] } : { ...node }));
         set({ nodes: snapshot, historyIndex: newIndex, selectedNodeIds: [], hasUnsavedChanges: true });
         saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
@@ -188,7 +204,7 @@ const useStore = create((set, get) => ({
         const { history, historyIndex } = get();
         if (historyIndex >= history.length - 1) return;
         const newIndex = historyIndex + 1;
-        const snapshot = JSON.parse(JSON.stringify(history[newIndex]));
+        const snapshot = history[newIndex].map(node => (node.points ? { ...node, points: [...node.points] } : { ...node }));
         set({ nodes: snapshot, historyIndex: newIndex, selectedNodeIds: [], hasUnsavedChanges: true });
         saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
@@ -278,83 +294,16 @@ const useStore = create((set, get) => ({
         debounceSave(() => get().syncSave());
     },
 
-    // --- Online/Offline ---
-    setOnline: (online) => set({ isOnline: online }),
-
-    // --- Unified save: always localStorage, optionally cloud ---
+    // --- Save (local only) ---
     syncSave: async () => {
         const state = get();
-        // Always save to localStorage + IndexedDB on PC
         await saveToLocalStorage(state);
         set({ hasUnsavedChanges: false, lastSaved: new Date().toISOString() });
-
-        // Only attempt cloud if API_URL is explicitly configured
-        if (API_URL && state.isOnline) {
-            await get().saveToCloud();
-        }
     },
 
-    saveToCloud: async () => {
-        const state = get();
-        if (state.isSaving) return;
+    loadData: async () => {
+        set({ isLoading: true });
 
-        set({ isSaving: true, cloudError: null });
-
-        try {
-            const response = await fetch(`${API_URL}/save`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    nodes: state.nodes,
-                    stagePosition: state.stagePosition,
-                    stageScale: state.stageScale,
-                }),
-            });
-
-            if (response.ok) {
-                set({ lastSaved: new Date().toISOString(), hasUnsavedChanges: false });
-                console.log('✓ Saved to cloud (Google Drive)');
-            } else {
-                throw new Error('Failed to save');
-            }
-        } catch (error) {
-            console.error('✗ Cloud save error:', error);
-            set({ cloudError: 'Failed to save to cloud' });
-            // Still mark as saved since localStorage has the data
-            set({ hasUnsavedChanges: false, lastSaved: new Date().toISOString() });
-        } finally {
-            set({ isSaving: false });
-        }
-    },
-
-    loadFromCloud: async () => {
-        set({ isLoading: true, cloudError: null });
-
-        // Only try cloud if API_URL is explicitly configured and online
-        if (API_URL && get().isOnline) {
-            try {
-                const response = await fetch(`${API_URL}/load`);
-                if (response.ok) {
-                    const data = await response.json();
-                    const nodes = data.nodes || [];
-                    set({
-                        nodes,
-                        stagePosition: data.stagePosition || { x: 0, y: 0 },
-                        stageScale: data.stageScale || 1,
-                        history: [JSON.parse(JSON.stringify(nodes))],
-                        historyIndex: 0,
-                    });
-                    await saveToLocalStorage(get());
-                    console.log(`✓ Loaded ${nodes.length} nodes from cloud`);
-                    set({ isLoading: false });
-                    return;
-                }
-            } catch (error) {
-                console.warn('✗ Cloud load failed, falling back to localStorage:', error);
-            }
-        }
-
-        // Fallback: load from localStorage
         const localData = await loadFromLocalStorage();
         if (localData) {
             const nodes = localData.nodes || [];
@@ -362,11 +311,10 @@ const useStore = create((set, get) => ({
                 nodes,
                 stagePosition: localData.stagePosition || { x: 0, y: 0 },
                 stageScale: localData.stageScale || 1,
-                history: [JSON.parse(JSON.stringify(nodes))],
+                history: [nodes.map(node => (node.points ? { ...node, points: [...node.points] } : { ...node }))],
                 historyIndex: 0,
             });
         } else {
-            // Nothing saved anywhere — start fresh
             set({ history: [[]], historyIndex: 0 });
         }
         set({ isLoading: false });
@@ -381,4 +329,5 @@ if (typeof window !== 'undefined') {
     });
 }
 
+export { loadMediaFromDB, saveMediaToDB };
 export default useStore;

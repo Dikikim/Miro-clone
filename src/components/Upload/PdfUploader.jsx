@@ -1,11 +1,12 @@
-import { useRef, useState, useEffect } from 'react';
-import { X, FileText, ChevronLeft, ChevronRight, Check, Loader2 } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { X, FileText, Loader2 } from 'lucide-react';
 import { validateFileSize } from '../../utils/fileHelpers';
 import useStore from '../../store/useStore';
+import { saveMediaToDB } from '../../store/useStore';
 import { cn } from '../../lib/utils';
 
 // Load PDF.js from CDN
-const loadPdfJs = () => {
+export const loadPdfJs = () => {
     return new Promise((resolve, reject) => {
         if (window.pdfjsLib) {
             resolve(window.pdfjsLib);
@@ -24,42 +25,58 @@ const loadPdfJs = () => {
     });
 };
 
+/**
+ * Render a single page of a PDF to a data URL.
+ * @param {Uint8Array} pdfBytes - Raw PDF file bytes
+ * @param {number} pageNum - 1-indexed page number
+ * @param {number} scale - Render scale
+ */
+export const renderPdfPage = async (pdfBytes, pageNum, scale = 1.5) => {
+    const pdfjsLib = await loadPdfJs();
+    // Copy the bytes so PDF.js doesn't detach the original buffer
+    const bytesCopy = new Uint8Array(pdfBytes);
+    const pdf = await pdfjsLib.getDocument({ data: bytesCopy }).promise;
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale });
+
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+
+    await page.render({ canvasContext: context, viewport }).promise;
+    return { dataUrl: canvas.toDataURL('image/png'), width: viewport.width, height: viewport.height };
+};
+
+/**
+ * Convert base64 string back to Uint8Array
+ */
+export const base64ToBytes = (base64) => {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+};
+
+/**
+ * Convert ArrayBuffer/Uint8Array to base64 string
+ */
+export const bytesToBase64 = (buffer) => {
+    const uint8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < uint8.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, uint8.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+};
+
 export default function PdfUploader({ onClose }) {
     const fileInputRef = useRef(null);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(false);
-    const [pdfDoc, setPdfDoc] = useState(null);
-    const [pages, setPages] = useState([]);
-    const [selectedPages, setSelectedPages] = useState(new Set());
-    const [previewPage, setPreviewPage] = useState(1);
-    const [previewImage, setPreviewImage] = useState(null);
 
     const { addNode, stagePosition, stageScale } = useStore();
-
-    // Render a page to canvas and return data URL
-    const renderPage = async (pdf, pageNum, scale = 1.5) => {
-        const page = await pdf.getPage(pageNum);
-        const viewport = page.getViewport({ scale });
-
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-
-        await page.render({ canvasContext: context, viewport }).promise;
-        return { dataUrl: canvas.toDataURL('image/png'), width: viewport.width, height: viewport.height };
-    };
-
-    // Load preview when page changes
-    useEffect(() => {
-        if (!pdfDoc || previewPage < 1 || previewPage > pages.length) return;
-
-        const loadPreview = async () => {
-            const { dataUrl } = await renderPage(pdfDoc, previewPage, 1);
-            setPreviewImage(dataUrl);
-        };
-        loadPreview();
-    }, [pdfDoc, previewPage, pages.length]);
 
     const handleFile = async (file) => {
         setError(null);
@@ -81,69 +98,66 @@ export default function PdfUploader({ onClose }) {
         try {
             const pdfjsLib = await loadPdfJs();
             const arrayBuffer = await file.arrayBuffer();
-            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            // Make a copy for PDF.js (it detaches the original)
+            const pdfBytesCopy = new Uint8Array(arrayBuffer).slice();
+            const pdf = await pdfjsLib.getDocument({ data: pdfBytesCopy }).promise;
 
-            setPdfDoc(pdf);
-            setPages(Array.from({ length: pdf.numPages }, (_, i) => i + 1));
-            setSelectedPages(new Set([1])); // Select first page by default
-            setPreviewPage(1);
-        } catch (err) {
-            setError('Failed to load PDF: ' + err.message);
-        }
-        setLoading(false);
-    };
+            // Render page 1 as cover
+            const page = await pdf.getPage(1);
+            const viewport = page.getViewport({ scale: 1.5 });
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            await page.render({ canvasContext: context, viewport }).promise;
+            const coverDataUrl = canvas.toDataURL('image/png');
 
-    const togglePage = (pageNum) => {
-        const newSelected = new Set(selectedPages);
-        if (newSelected.has(pageNum)) {
-            newSelected.delete(pageNum);
-        } else {
-            newSelected.add(pageNum);
-        }
-        setSelectedPages(newSelected);
-    };
+            const scaledWidth = viewport.width / 2;
+            const scaledHeight = viewport.height / 2;
 
-    const selectAll = () => setSelectedPages(new Set(pages));
-    const selectNone = () => setSelectedPages(new Set());
+            const baseX = (window.innerWidth / 2 - stagePosition.x) / stageScale - scaledWidth / 2;
+            const baseY = (window.innerHeight / 2 - stagePosition.y) / stageScale - scaledHeight / 2;
 
-    const addSelectedPages = async () => {
-        if (selectedPages.size === 0 || !pdfDoc) return;
-        setLoading(true);
+            // Convert the ORIGINAL arrayBuffer to base64 BEFORE addNode (which may trigger sync save)
+            const base64Pdf = bytesToBase64(new Uint8Array(arrayBuffer));
 
-        const sortedPages = [...selectedPages].sort((a, b) => a - b);
-        let offsetX = 0;
-        const baseX = (window.innerWidth / 2 - stagePosition.x) / stageScale - 200;
-        const baseY = (window.innerHeight / 2 - stagePosition.y) / stageScale - 300;
+            // Generate a node ID and save PDF data first
+            const { v4: uuidv4 } = await import('uuid');
+            const nodeId = uuidv4();
 
-        for (const pageNum of sortedPages) {
-            const { dataUrl, width, height } = await renderPage(pdfDoc, pageNum, 2);
-            const scaledWidth = width / 2;
-            const scaledHeight = height / 2;
+            // Save PDF bytes to IndexedDB FIRST
+            await saveMediaToDB(`${nodeId}_pdf`, base64Pdf);
 
+            // Now add the node to the canvas
             addNode({
-                type: 'image',
-                x: baseX + offsetX,
+                id: nodeId,
+                type: 'pdf',
+                x: baseX,
                 y: baseY,
                 width: scaledWidth,
                 height: scaledHeight,
-                src: dataUrl,
+                fileName: file.name,
+                coverSrc: coverDataUrl,
+                totalPages: pdf.numPages,
+                currentPage: 1,
             });
 
-            offsetX += scaledWidth + 20;
+            setLoading(false);
+            onClose?.();
+        } catch (err) {
+            setError('Failed to load PDF: ' + err.message);
+            setLoading(false);
         }
-
-        setLoading(false);
-        onClose?.();
     };
 
     return (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-            <div className="bg-white rounded-lg shadow-xl w-[500px] max-w-[95vw] max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="bg-white rounded-lg shadow-xl w-[400px] max-w-[95vw] overflow-hidden flex flex-col">
                 {/* Header */}
                 <div className="flex items-center justify-between px-4 py-3 border-b">
                     <div className="flex items-center gap-2">
                         <FileText className="w-5 h-5 text-red-500" />
-                        <h2 className="font-semibold text-gray-800">Add PDF Pages</h2>
+                        <h2 className="font-semibold text-gray-800">Upload PDF</h2>
                     </div>
                     <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
                         <X className="w-5 h-5" />
@@ -151,87 +165,24 @@ export default function PdfUploader({ onClose }) {
                 </div>
 
                 {/* Content */}
-                <div className="flex-1 overflow-auto p-4">
-                    {!pdfDoc ? (
-                        // File selection
-                        <div
-                            onClick={() => fileInputRef.current?.click()}
-                            className={cn(
-                                "border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all",
-                                "hover:border-blue-400 hover:bg-blue-50"
-                            )}
-                        >
-                            {loading ? (
-                                <Loader2 className="w-10 h-10 mx-auto mb-3 text-blue-500 animate-spin" />
-                            ) : (
-                                <FileText className="w-10 h-10 mx-auto mb-3 text-gray-400" />
-                            )}
-                            <p className="font-medium text-gray-700">
-                                {loading ? 'Loading PDF...' : 'Click to select a PDF file'}
-                            </p>
-                            <p className="text-sm text-gray-500 mt-1">Up to 250MB</p>
-                        </div>
-                    ) : (
-                        // Page selection
-                        <div>
-                            {/* Preview */}
-                            <div className="bg-gray-100 rounded-lg p-4 mb-4 flex items-center justify-center min-h-[200px]">
-                                {previewImage ? (
-                                    <img src={previewImage} alt={`Page ${previewPage}`} className="max-h-[200px] shadow-md" />
-                                ) : (
-                                    <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
-                                )}
-                            </div>
-
-                            {/* Page navigation */}
-                            <div className="flex items-center justify-center gap-4 mb-4">
-                                <button
-                                    onClick={() => setPreviewPage(Math.max(1, previewPage - 1))}
-                                    disabled={previewPage <= 1}
-                                    className="p-1 hover:bg-gray-100 rounded disabled:opacity-30"
-                                >
-                                    <ChevronLeft className="w-5 h-5" />
-                                </button>
-                                <span className="text-sm text-gray-600">
-                                    Page {previewPage} of {pages.length}
-                                </span>
-                                <button
-                                    onClick={() => setPreviewPage(Math.min(pages.length, previewPage + 1))}
-                                    disabled={previewPage >= pages.length}
-                                    className="p-1 hover:bg-gray-100 rounded disabled:opacity-30"
-                                >
-                                    <ChevronRight className="w-5 h-5" />
-                                </button>
-                            </div>
-
-                            {/* Page selector */}
-                            <div className="mb-4">
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className="text-sm font-medium text-gray-700">Select pages to add:</span>
-                                    <div className="flex gap-2">
-                                        <button onClick={selectAll} className="text-xs text-blue-600 hover:underline">All</button>
-                                        <button onClick={selectNone} className="text-xs text-blue-600 hover:underline">None</button>
-                                    </div>
-                                </div>
-                                <div className="flex flex-wrap gap-1 max-h-[100px] overflow-auto">
-                                    {pages.map((pageNum) => (
-                                        <button
-                                            key={pageNum}
-                                            onClick={() => { togglePage(pageNum); setPreviewPage(pageNum); }}
-                                            className={cn(
-                                                "w-8 h-8 text-xs rounded border transition-all flex items-center justify-center",
-                                                selectedPages.has(pageNum)
-                                                    ? "bg-blue-500 text-white border-blue-600"
-                                                    : "bg-white text-gray-700 border-gray-300 hover:border-blue-400"
-                                            )}
-                                        >
-                                            {selectedPages.has(pageNum) ? <Check className="w-3 h-3" /> : pageNum}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    )}
+                <div className="p-4">
+                    <div
+                        onClick={() => fileInputRef.current?.click()}
+                        className={cn(
+                            "border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all",
+                            "hover:border-blue-400 hover:bg-blue-50"
+                        )}
+                    >
+                        {loading ? (
+                            <Loader2 className="w-10 h-10 mx-auto mb-3 text-blue-500 animate-spin" />
+                        ) : (
+                            <FileText className="w-10 h-10 mx-auto mb-3 text-gray-400" />
+                        )}
+                        <p className="font-medium text-gray-700">
+                            {loading ? 'Processing PDF...' : 'Click to select a PDF file'}
+                        </p>
+                        <p className="text-sm text-gray-500 mt-1">Up to 250MB</p>
+                    </div>
 
                     {error && (
                         <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
@@ -241,26 +192,6 @@ export default function PdfUploader({ onClose }) {
                 </div>
 
                 <input ref={fileInputRef} type="file" accept=".pdf" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} className="hidden" />
-
-                {/* Footer */}
-                {pdfDoc && (
-                    <div className="px-4 py-3 border-t flex justify-between items-center">
-                        <button
-                            onClick={() => { setPdfDoc(null); setPages([]); setSelectedPages(new Set()); }}
-                            className="text-sm text-gray-600 hover:text-gray-800"
-                        >
-                            ← Choose different file
-                        </button>
-                        <button
-                            onClick={addSelectedPages}
-                            disabled={selectedPages.size === 0 || loading}
-                            className="px-4 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                        >
-                            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-                            Add {selectedPages.size} page{selectedPages.size !== 1 ? 's' : ''}
-                        </button>
-                    </div>
-                )}
             </div>
         </div>
     );
