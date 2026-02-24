@@ -22,7 +22,7 @@ async function getPdfBytes(nodeId) {
  * positioned to follow a PDF node. Shows doc name, page nav,
  * extract pages, and download buttons.
  */
-export default function PdfOverlay({ node, stagePosition, stageScale }) {
+export default function PdfOverlay({ node, stagePosition, stageScale, isSelected }) {
     const { updateNode, addNode } = useStore();
     const [showExtractModal, setShowExtractModal] = useState(false);
     const [navigating, setNavigating] = useState(false);
@@ -101,7 +101,7 @@ export default function PdfOverlay({ node, stagePosition, stageScale }) {
                     position: 'fixed',
                     left: `${screenX}px`,
                     top: `${screenY + 4}px`,
-                    width: `${Math.max(barWidth, 320)}px`,
+                    width: isSelected ? `${Math.max(barWidth, 320)}px` : 'auto',
                     zIndex: 30,
                     pointerEvents: 'auto',
                 }}
@@ -113,59 +113,66 @@ export default function PdfOverlay({ node, stagePosition, stageScale }) {
                     alignItems: 'center',
                     background: '#1e1e1e',
                     borderRadius: '8px',
-                    padding: '4px 8px',
+                    padding: isSelected ? '4px 8px' : '4px 10px',
                     gap: '4px',
                     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                     fontSize: '13px',
                     color: '#e0e0e0',
                     boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                    transition: 'all 0.2s ease',
+                    overflow: 'hidden',
                 }}>
-                    {/* Document name */}
+                    {/* Document name — always visible */}
                     <span style={{
-                        flex: '1',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
-                        maxWidth: '140px',
+                        maxWidth: isSelected ? '140px' : '180px',
                         fontSize: '12px',
+                        flex: isSelected ? '1' : 'none',
                     }}>
                         {truncatedName}
                     </span>
 
-                    {/* Page nav */}
-                    <OverlayButton
-                        onClick={goToPrevPage}
-                        disabled={node.currentPage <= 1 || navigating}
-                        title="Previous page"
-                    >
-                        <ChevronLeft size={16} />
-                    </OverlayButton>
-                    <span style={{ fontSize: '12px', minWidth: '60px', textAlign: 'center' }}>
-                        {node.currentPage} of {node.totalPages}
-                    </span>
-                    <OverlayButton
-                        onClick={goToNextPage}
-                        disabled={node.currentPage >= node.totalPages || navigating}
-                        title="Next page"
-                    >
-                        <ChevronRight size={16} />
-                    </OverlayButton>
+                    {/* Expanded controls — only when selected */}
+                    {isSelected && (
+                        <>
+                            {/* Page nav */}
+                            <OverlayButton
+                                onClick={goToPrevPage}
+                                disabled={node.currentPage <= 1 || navigating}
+                                title="Previous page"
+                            >
+                                <ChevronLeft size={16} />
+                            </OverlayButton>
+                            <span style={{ fontSize: '12px', minWidth: '60px', textAlign: 'center' }}>
+                                {node.currentPage} of {node.totalPages}
+                            </span>
+                            <OverlayButton
+                                onClick={goToNextPage}
+                                disabled={node.currentPage >= node.totalPages || navigating}
+                                title="Next page"
+                            >
+                                <ChevronRight size={16} />
+                            </OverlayButton>
 
-                    {/* Divider */}
-                    <div style={{ width: '1px', height: '20px', background: '#444', margin: '0 4px' }} />
+                            {/* Divider */}
+                            <div style={{ width: '1px', height: '20px', background: '#444', margin: '0 4px' }} />
 
-                    {/* Extract pages */}
-                    <OverlayButton
-                        onClick={() => setShowExtractModal(true)}
-                        title="Extract pages"
-                    >
-                        <Copy size={16} />
-                    </OverlayButton>
+                            {/* Extract pages */}
+                            <OverlayButton
+                                onClick={() => setShowExtractModal(true)}
+                                title="Extract pages"
+                            >
+                                <Copy size={16} />
+                            </OverlayButton>
 
-                    {/* Download */}
-                    <OverlayButton onClick={handleDownload} title="Download PDF">
-                        <Download size={16} />
-                    </OverlayButton>
+                            {/* Download */}
+                            <OverlayButton onClick={handleDownload} title="Download PDF">
+                                <Download size={16} />
+                            </OverlayButton>
+                        </>
+                    )}
                 </div>
             </div>
 

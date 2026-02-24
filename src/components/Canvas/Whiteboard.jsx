@@ -1137,7 +1137,13 @@ export default function Whiteboard() {
         n.scaleX(1); n.scaleY(1);
 
         if (type === 'rectangle' || type === 'image' || type === 'youtube' || type === 'diamond' || type === 'audio' || type === 'video' || type === 'pdf') {
-            updateNode(id, { x: n.x(), y: n.y(), width: Math.max(20, n.width() * sx), height: Math.max(20, n.height() * sy) });
+            // For Group-based nodes (audio, video, youtube, pdf), n.width()/n.height()
+            // returns 0 because Groups don't have intrinsic dimensions.
+            // Use the original node data from the store to compute the new size.
+            const nodeData = nodes.find(nd => nd.id === id);
+            const origW = nodeData ? (nodeData.width || 300) : (n.width() || 300);
+            const origH = nodeData ? (nodeData.height || 80) : (n.height() || 80);
+            updateNode(id, { x: n.x(), y: n.y(), width: Math.max(20, origW * sx), height: Math.max(20, origH * sy) });
         } else if (type === 'circle' || type === 'triangle' || type === 'hexagon') {
             updateNode(id, { x: n.x(), y: n.y(), radius: Math.max(10, n.radius() * Math.max(sx, sy)) });
         } else if (type === 'star') {
@@ -1145,7 +1151,7 @@ export default function Whiteboard() {
         } else if (type === 'text') {
             updateNode(id, { x: n.x(), y: n.y(), fontSize: Math.max(8, Math.round(n.fontSize() * sy)) });
         }
-    }, [updateNode]);
+    }, [updateNode, nodes]);
 
     const renderNode = (node) => {
         // When using drawing tools, make nodes non-interactive so clicks pass through
@@ -1472,7 +1478,7 @@ export default function Whiteboard() {
  * Rendered as a sibling to the Konva Stage div.
  */
 function PdfOverlays() {
-    const { nodes, stagePosition, stageScale } = useStore();
+    const { nodes, selectedNodeIds, stagePosition, stageScale } = useStore();
     const pdfNodes = nodes.filter(n => n.type === 'pdf');
 
     if (pdfNodes.length === 0) return null;
@@ -1485,6 +1491,7 @@ function PdfOverlays() {
                     node={node}
                     stagePosition={stagePosition}
                     stageScale={stageScale}
+                    isSelected={selectedNodeIds.includes(node.id)}
                 />
             ))}
         </>

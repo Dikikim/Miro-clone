@@ -44,6 +44,7 @@ const mediaOptions = [
 export default function Toolbar() {
     const {
         tool, setTool, shapeType, setShapeType,
+        fillColor, setFillColor,
         strokeColor, setStrokeColor, strokeWidth, setStrokeWidth,
         textColor, setTextColor,
         nodes, selectedNodeIds, deleteAllNodes, deleteSelectedNodes,
@@ -54,6 +55,8 @@ export default function Toolbar() {
     const [activePopup, setActivePopup] = useState(null);
     const [showConfirm, setShowConfirm] = useState(false);
     const popupRef = useRef(null);
+    const penBtnRef = useRef(null);
+    const shapeBtnRef = useRef(null);
 
     // Close popup when clicking outside
     useEffect(() => {
@@ -117,13 +120,47 @@ export default function Toolbar() {
                 <div className="h-px bg-gray-200 my-1" />
 
                 {/* Shape Tool */}
-                <ToolButton toolName="shape" icon={Square} label="Shapes (S)" hasPopup isActive={tool === 'shape'} />
+                <button
+                    ref={shapeBtnRef}
+                    onClick={() => handleToolClick('shape', true)}
+                    className={cn(
+                        "flex items-center justify-center rounded-lg transition-all relative group",
+                        tool === 'shape'
+                            ? "bg-purple-100 text-purple-600"
+                            : "text-gray-600 hover:bg-gray-100"
+                    )}
+                    style={{
+                        width: 'clamp(28px, 2.5vw + 1vh, 42px)',
+                        height: 'clamp(28px, 2.5vw + 1vh, 42px)',
+                    }}
+                    title="Shapes (S)"
+                >
+                    <Square style={{ width: 'clamp(14px, 1.2vw + 0.5vh, 22px)', height: 'clamp(14px, 1.2vw + 0.5vh, 22px)' }} />
+                    <ChevronRight className="absolute opacity-50" style={{ width: 'clamp(6px, 0.5vw, 10px)', height: 'clamp(6px, 0.5vw, 10px)', right: '2px', bottom: '2px' }} />
+                </button>
 
                 {/* Text Tool */}
                 <ToolButton toolName="text" icon={Type} label="Text (T)" />
 
                 {/* Pen Tool */}
-                <ToolButton toolName="pen" icon={Pencil} label="Pen (P)" hasPopup isActive={tool === 'pen'} />
+                <button
+                    ref={penBtnRef}
+                    onClick={() => handleToolClick('pen', true)}
+                    className={cn(
+                        "flex items-center justify-center rounded-lg transition-all relative group",
+                        tool === 'pen'
+                            ? "bg-purple-100 text-purple-600"
+                            : "text-gray-600 hover:bg-gray-100"
+                    )}
+                    style={{
+                        width: 'clamp(28px, 2.5vw + 1vh, 42px)',
+                        height: 'clamp(28px, 2.5vw + 1vh, 42px)',
+                    }}
+                    title="Pen (P)"
+                >
+                    <Pencil style={{ width: 'clamp(14px, 1.2vw + 0.5vh, 22px)', height: 'clamp(14px, 1.2vw + 0.5vh, 22px)' }} />
+                    <ChevronRight className="absolute opacity-50" style={{ width: 'clamp(6px, 0.5vw, 10px)', height: 'clamp(6px, 0.5vw, 10px)', right: '2px', bottom: '2px' }} />
+                </button>
 
                 {/* Eraser */}
                 <ToolButton toolName="eraser" icon={Eraser} label="Eraser (E)" />
@@ -283,11 +320,15 @@ export default function Toolbar() {
                 </div>
             )}
 
-            {/* Shape Popup - positioned outside scrollable container */}
+            {/* Shape Popup - shapes, lines, colors, and stroke width */}
             {activePopup === 'shape' && (
                 <div
-                    className="fixed bg-white rounded-xl shadow-xl border border-gray-200 p-3 w-52 z-50"
-                    style={{ left: 'clamp(50px, 4vw + 2vh, 70px)', top: '120px' }}
+                    className="fixed bg-white rounded-xl shadow-xl border border-gray-200 p-3 z-50"
+                    style={{
+                        left: 'clamp(50px, 4vw + 2vh, 70px)',
+                        top: shapeBtnRef.current ? `${shapeBtnRef.current.getBoundingClientRect().top}px` : '50%',
+                        width: '220px',
+                    }}
                 >
                     {/* Shapes Grid */}
                     <div className="text-xs text-gray-500 mb-2">Shapes</div>
@@ -311,7 +352,7 @@ export default function Toolbar() {
 
                     {/* Lines */}
                     <div className="text-xs text-gray-500 mb-2">Lines</div>
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-4 gap-2 mb-3">
                         {lineOptions.map(opt => (
                             <button
                                 key={opt.id}
@@ -328,31 +369,12 @@ export default function Toolbar() {
                             </button>
                         ))}
                     </div>
-                </div>
-            )}
 
-            {/* Pen Popup - positioned outside scrollable container */}
-            {activePopup === 'pen' && (
-                <div
-                    className="fixed bg-white rounded-xl shadow-xl border border-gray-200 p-3 w-48 z-50"
-                    style={{ left: 'clamp(50px, 4vw + 2vh, 70px)', top: '180px' }}
-                >
-                    {/* Stroke Width */}
-                    <div className="mb-3">
-                        <input
-                            type="range"
-                            min="1"
-                            max="20"
-                            value={strokeWidth}
-                            onChange={(e) => setStrokeWidth(Number(e.target.value))}
-                            className="w-full h-1.5 accent-purple-500"
-                        />
-                        <div className="text-xs text-gray-500 mt-1">Stroke width: {strokeWidth}px</div>
-                    </div>
+                    <div className="h-px bg-gray-200 my-2" />
 
-                    {/* All Colors */}
-                    <div className="text-xs text-gray-500 mb-2">Colors</div>
-                    <div className="grid grid-cols-6 gap-1.5">
+                    {/* Stroke Color */}
+                    <div className="text-xs text-gray-500 mb-2">Stroke Color</div>
+                    <div className="grid grid-cols-6 gap-1.5 mb-3">
                         {penColors.map(color => (
                             <button
                                 key={color}
@@ -365,6 +387,118 @@ export default function Toolbar() {
                             />
                         ))}
                     </div>
+
+                    {/* Fill Color */}
+                    <div className="text-xs text-gray-500 mb-2">Fill Color</div>
+                    <div className="grid grid-cols-6 gap-1.5 mb-3">
+                        <button
+                            onClick={() => setFillColor('transparent')}
+                            className={cn(
+                                "w-6 h-6 rounded-full transition-transform hover:scale-110 border border-gray-300 relative overflow-hidden",
+                                fillColor === 'transparent' ? "ring-2 ring-purple-500 ring-offset-1" : ""
+                            )}
+                            title="No fill"
+                        >
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="w-full h-px bg-red-400 rotate-45" />
+                            </div>
+                        </button>
+                        {penColors.map(color => (
+                            <button
+                                key={color}
+                                onClick={() => setFillColor(color)}
+                                className={cn(
+                                    "w-6 h-6 rounded-full transition-transform hover:scale-110",
+                                    fillColor === color ? "ring-2 ring-purple-500 ring-offset-1" : ""
+                                )}
+                                style={{ backgroundColor: color }}
+                            />
+                        ))}
+                    </div>
+
+                    {/* Stroke Width */}
+                    <div className="text-xs text-gray-500 mb-1">Stroke Width</div>
+                    <input
+                        type="range"
+                        min="1"
+                        max="20"
+                        value={strokeWidth}
+                        onChange={(e) => setStrokeWidth(Number(e.target.value))}
+                        className="w-full h-1.5 accent-purple-500"
+                    />
+                    <div className="text-xs text-gray-500 mt-1">{strokeWidth}px</div>
+                </div>
+            )}
+
+            {/* Pen/Shape Popup - combined stroke color, fill color, and stroke width */}
+            {activePopup === 'pen' && (
+                <div
+                    className="fixed bg-white rounded-xl shadow-xl border border-gray-200 p-3 z-50"
+                    style={{
+                        left: 'clamp(50px, 4vw + 2vh, 70px)',
+                        top: penBtnRef.current ? `${penBtnRef.current.getBoundingClientRect().top}px` : '50%',
+                        width: '200px',
+                    }}
+                >
+                    {/* Stroke Color */}
+                    <div className="text-xs text-gray-500 mb-2">Stroke Color</div>
+                    <div className="grid grid-cols-6 gap-1.5 mb-3">
+                        {penColors.map(color => (
+                            <button
+                                key={color}
+                                onClick={() => setStrokeColor(color)}
+                                className={cn(
+                                    "w-6 h-6 rounded-full transition-transform hover:scale-110",
+                                    strokeColor === color ? "ring-2 ring-purple-500 ring-offset-1" : ""
+                                )}
+                                style={{ backgroundColor: color }}
+                            />
+                        ))}
+                    </div>
+
+                    {/* Fill Color - only for shapes */}
+                    {tool === 'shape' && (
+                        <>
+                            <div className="text-xs text-gray-500 mb-2">Fill Color</div>
+                            <div className="grid grid-cols-6 gap-1.5 mb-3">
+                                <button
+                                    onClick={() => setFillColor('transparent')}
+                                    className={cn(
+                                        "w-6 h-6 rounded-full transition-transform hover:scale-110 border border-gray-300 relative overflow-hidden",
+                                        fillColor === 'transparent' ? "ring-2 ring-purple-500 ring-offset-1" : ""
+                                    )}
+                                    title="No fill"
+                                >
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                        <div className="w-full h-px bg-red-400 rotate-45" />
+                                    </div>
+                                </button>
+                                {penColors.map(color => (
+                                    <button
+                                        key={color}
+                                        onClick={() => setFillColor(color)}
+                                        className={cn(
+                                            "w-6 h-6 rounded-full transition-transform hover:scale-110",
+                                            fillColor === color ? "ring-2 ring-purple-500 ring-offset-1" : ""
+                                        )}
+                                        style={{ backgroundColor: color }}
+                                    />
+                                ))}
+                            </div>
+                        </>
+                    )}
+
+                    {/* Stroke Width */}
+                    <div className="text-xs text-gray-500 mb-1">Stroke Width</div>
+                    <input
+                        type="range"
+                        min="1"
+                        max="20"
+                        value={strokeWidth}
+                        onChange={(e) => setStrokeWidth(Number(e.target.value))}
+                        className="w-full h-1.5 accent-purple-500"
+                    />
+                    <div className="text-xs text-gray-500 mt-1">{strokeWidth}px</div>
                 </div>
             )}
 
