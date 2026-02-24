@@ -276,7 +276,7 @@ export default function Whiteboard() {
                     let isUnderline = false;
                     let currentColor = '#000000';
 
-                    // Create Miro-style toolbar
+                    // Create text format toolbar
                     const toolbar = document.createElement('div');
                     toolbar.id = 'text-format-toolbar';
                     toolbar.style.cssText = `
@@ -532,7 +532,7 @@ export default function Whiteboard() {
                     };
                     document.addEventListener('mousedown', closeDropdownOnClickOutside);
 
-                    // Create textarea with Miro style - expands horizontally
+                    // Create textarea - expands horizontally
                     const textarea = document.createElement('textarea');
                     document.body.appendChild(textarea);
                     textarea.value = '';
@@ -802,7 +802,7 @@ export default function Whiteboard() {
         let currentAlign = node.align || 'left';
         let currentColor = node.fill || '#000000';
 
-        // Create floating toolbar - exact Miro style
+        // Create floating toolbar
         const toolbar = document.createElement('div');
         toolbar.id = 'text-format-toolbar';
         toolbar.style.cssText = `

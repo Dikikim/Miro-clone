@@ -12,7 +12,7 @@ export default function BottomControls() {
 
     return (
         <>
-            {/* Bottom Right - Zoom (like Miro) */}
+            {/* Bottom Right - Zoom */}
             <div className="fixed bottom-3 right-3 z-40">
                 <div className="flex items-center bg-white rounded-lg shadow-lg border border-gray-200" style={{ gap: '0', padding: '0' }}>
                     <button

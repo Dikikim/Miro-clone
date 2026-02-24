@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 
-const LOCAL_STORAGE_KEY = 'miro_clone_state';
+const LOCAL_STORAGE_KEY = 'kot_state';
 const MAX_HISTORY = 50;
 
 // Debounce helper
@@ -12,7 +12,7 @@ const debounceSave = (fn, delay = 500) => {
 };
 
 // --- IndexedDB helpers for large media data ---
-const MEDIA_DB_NAME = 'miro_clone_media';
+const MEDIA_DB_NAME = 'kot_media';
 const MEDIA_STORE_NAME = 'media_sources';
 
 const openMediaDB = () => {

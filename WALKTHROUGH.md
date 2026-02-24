@@ -1,7 +1,7 @@
-# Miro Clone Project Walkthrough
+# KOT - Whiteboard Application
 
 ## Overview
-This project is a collaborative whiteboard application (Miro clone) featuring:
+KOT is a collaborative whiteboard application featuring:
 - **Infinite Canvas**: Pan and zoom capabilities.
 - **Tools**: Shapes (Rect, Circle, Triangle), Text, Pencil (Freehand), Images.
 - **Persistence**:
@@ -12,7 +12,7 @@ This project is a collaborative whiteboard application (Miro clone) featuring:
 ## Deployment
 
 ### Backend (Render)
-- **Repo**: Connected to `Miro-clone` on GitHub.
+- **Repo**: Connected to `KOT` on GitHub.
 - **Build Command**: `pip install -r server/requirements.txt`
 - **Start Command**: `gunicorn --chdir server app:app`
 - **Environment Variables**:
@@ -21,7 +21,7 @@ This project is a collaborative whiteboard application (Miro clone) featuring:
     - *Note*: If these are missing, the server defaults to the local `Data/` folder.
 
 ### Frontend (Netlify)
-- **Repo**: Connected to `Miro-clone` on GitHub.
+- **Repo**: Connected to `KOT` on GitHub.
 - **Build Command**: `npm run build`
 - **Publish Directory**: `dist`
 - **Environment Variables**:
