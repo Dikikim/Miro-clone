@@ -227,6 +227,7 @@ function OverlayButton({ children, onClick, disabled, title }) {
  * Includes page thumbnail previews.
  */
 function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }) {
+    const { nodes } = useStore();
     const [selectedPages, setSelectedPages] = useState(new Set());
     const [loading, setLoading] = useState(false);
     const [thumbnails, setThumbnails] = useState({});
@@ -244,7 +245,7 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
 
                 const thumbs = {};
                 // Load thumbnails in batches of 5 for performance
-                const pagesToLoad = pages.slice(0, Math.min(totalPages, 50)); // cap at 50 thumbnails
+                const pagesToLoad = pages;
                 for (let i = 0; i < pagesToLoad.length; i += 5) {
                     const batch = pagesToLoad.slice(i, i + 5);
                     const results = await Promise.all(
@@ -282,30 +283,44 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
         if (selectedPages.size === 0) return;
         setLoading(true);
 
+        // Fixed canvas size — independent of zoom/scale
+        const PAGE_W = 400;
+        const PAGE_H = 566; // A4 ratio
+        const GAP_X = 20;
+        const GAP_Y = 30;
+        const COLS = 10;
+
+        // Count already-placed pages from this same PDF to continue grid where we left off
+        const alreadyPlaced = nodes.filter(n => n.extractedFromPdfId === node.id).length;
+
+        // Place below the source PDF node using its stored position and height
+        const nodeBottom = node.y + (node.height || 400);
+        const baseX = node.x;
+        const baseY = nodeBottom + 40;
+
         try {
             const bytes = await getPdfBytes(node.id);
             if (!bytes) { setLoading(false); return; }
 
             const sortedPages = [...selectedPages].sort((a, b) => a - b);
-            let offsetX = 0;
-            const baseX = (window.innerWidth / 2 - stagePosition.x) / stageScale - 200;
-            const baseY = (window.innerHeight / 2 - stagePosition.y) / stageScale - 300;
 
-            for (const pageNum of sortedPages) {
-                const { dataUrl, width, height } = await renderPdfPage(bytes, pageNum, 2);
-                const scaledWidth = width / 2;
-                const scaledHeight = height / 2;
+            for (let i = 0; i < sortedPages.length; i++) {
+                const pageNum = sortedPages[i];
+                const gridIndex = alreadyPlaced + i;
+                const col = gridIndex % COLS;
+                const row = Math.floor(gridIndex / COLS);
+
+                const { dataUrl } = await renderPdfPage(bytes, pageNum, 2);
 
                 addNode({
                     type: 'image',
-                    x: baseX + offsetX,
-                    y: baseY,
-                    width: scaledWidth,
-                    height: scaledHeight,
+                    x: baseX + col * (PAGE_W + GAP_X),
+                    y: baseY + row * (PAGE_H + GAP_Y),
+                    width: PAGE_W,
+                    height: PAGE_H,
                     src: dataUrl,
+                    extractedFromPdfId: node.id,
                 });
-
-                offsetX += scaledWidth + 20;
             }
         } catch (e) {
             console.error('Extract pages error:', e);
@@ -430,11 +445,7 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
                         </div>
                     )}
 
-                    {totalPages > 50 && (
-                        <p className="text-xs text-gray-400 mt-3 text-center">
-                            Showing previews for first 50 pages. All {totalPages} pages can be selected.
-                        </p>
-                    )}
+
                 </div>
 
                 <div className="px-4 py-3 border-t flex justify-end gap-2">

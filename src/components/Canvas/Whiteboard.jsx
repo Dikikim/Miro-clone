@@ -165,10 +165,11 @@ export default function Whiteboard() {
     const [editingTextId, setEditingTextId] = useState(null);
     const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
     const [drawingShape, setDrawingShape] = useState(null);
+    const [selectionRect, setSelectionRect] = useState(null);
 
     const {
         nodes, selectedNodeIds, tool, shapeType, stagePosition, stageScale,
-        fillColor, strokeColor, strokeWidth, textColor,
+        fillColor, strokeColor, strokeWidth, textColor, highlighterColor,
         addNode, updateNode, deleteNode, selectNode, clearSelection, setStagePosition, setStageScale,
     } = useStore();
 
@@ -212,10 +213,19 @@ export default function Whiteboard() {
 
     const handleMouseDown = useCallback((e) => {
         // Track which mouse button was pressed
-        mouseButtonRef.current = e.evt ? e.evt.button : 0;
+        const button = e.evt ? e.evt.button : 0;
+        mouseButtonRef.current = button;
 
-        // Only respond to left mouse button (button 0) for our custom handling
-        if (e.evt && e.evt.button !== 0) return;
+        // Middle mouse button (button 1) — always pan, even over objects
+        if (button === 1) {
+            e.evt?.preventDefault();
+            isPanning.current = true;
+            lastPointer.current = stageRef.current.getPointerPosition();
+            return;
+        }
+
+        // Only respond to left mouse button (button 0) for tool actions
+        if (button !== 0) return;
 
         const onEmpty = e.target === e.target.getStage();
 
@@ -225,6 +235,12 @@ export default function Whiteboard() {
         if (tool === 'pen') {
             isDrawing.current = true;
             currentLineId.current = addNode({ type: 'line', points: [pos.x, pos.y], stroke: strokeColor, strokeWidth, lineCap: 'round', lineJoin: 'round' });
+            return;
+        }
+
+        if (tool === 'highlighter') {
+            isDrawing.current = true;
+            currentLineId.current = addNode({ type: 'highlight', points: [pos.x, pos.y], stroke: highlighterColor, strokeWidth, opacity: 0.4, lineCap: 'round', lineJoin: 'round' });
             return;
         }
 
@@ -242,9 +258,8 @@ export default function Whiteboard() {
         // Clicked on empty canvas
         if (tool === 'select') {
             clearSelection();
-            // Start manual panning
-            isPanning.current = true;
-            lastPointer.current = stageRef.current.getPointerPosition();
+            // Start rubber-band selection
+            setSelectionRect({ startX: pos.x, startY: pos.y, currentX: pos.x, currentY: pos.y });
             return;
         }
 
@@ -619,10 +634,10 @@ export default function Whiteboard() {
                 }
             }, 50);
         }
-    }, [tool, shapeType, fillColor, strokeColor, strokeWidth, addNode, updateNode, deleteNode, clearSelection, getPos, nodes, stageScale]);
+    }, [tool, shapeType, fillColor, strokeColor, strokeWidth, highlighterColor, addNode, updateNode, deleteNode, clearSelection, getPos, nodes, stageScale]);
 
     const handleMouseMove = useCallback((e) => {
-        // Manual panning — move the stage position by the mouse delta
+        // Manual panning — move the stage position by the mouse delta (middle button)
         if (isPanning.current) {
             const stage = stageRef.current;
             if (stage) {
@@ -643,12 +658,18 @@ export default function Whiteboard() {
         const pos = getPos();
         if (!pos) return;
 
+        // Rubber-band selection — update rectangle
+        if (selectionRect && tool === 'select') {
+            setSelectionRect({ ...selectionRect, currentX: pos.x, currentY: pos.y });
+            return;
+        }
+
         if (drawingShape && tool === 'shape') {
             setDrawingShape({ ...drawingShape, currentX: pos.x, currentY: pos.y });
             return;
         }
 
-        if (isDrawing.current && tool === 'pen' && currentLineId.current) {
+        if (isDrawing.current && (tool === 'pen' || tool === 'highlighter') && currentLineId.current) {
             const node = nodes.find(n => n.id === currentLineId.current);
             if (node) updateNode(currentLineId.current, { points: [...node.points, pos.x, pos.y] });
             return;
@@ -659,14 +680,86 @@ export default function Whiteboard() {
             if (target !== target.getStage()) {
                 const clickedId = target.id();
                 const nodeData = nodes.find(n => n.id === clickedId);
-                if (clickedId && nodeData && nodeData.type === 'line') {
+                if (clickedId && nodeData && (nodeData.type === 'line' || nodeData.type === 'highlight')) {
                     deleteNode(clickedId);
                 }
             }
         }
-    }, [tool, nodes, updateNode, deleteNode, getPos, drawingShape]);
+    }, [tool, nodes, updateNode, deleteNode, getPos, drawingShape, selectionRect]);
+
+    // Helper to compute bounding box for any node type
+    const getNodeBounds = useCallback((node) => {
+        const t = node.type;
+        if (t === 'rectangle' || t === 'roundedRect' || t === 'image' || t === 'pdf' || t === 'audio' || t === 'video' || t === 'cloud') {
+            return { x: node.x, y: node.y, width: node.width || 300, height: node.height || 80 };
+        }
+        if (t === 'circle' || t === 'triangle' || t === 'pentagon' || t === 'hexagon' || t === 'octagon') {
+            const r = node.radius || 50;
+            return { x: node.x - r, y: node.y - r, width: r * 2, height: r * 2 };
+        }
+        if (t === 'ellipse') {
+            const rx = node.radiusX || 50, ry = node.radiusY || 50;
+            return { x: node.x - rx, y: node.y - ry, width: rx * 2, height: ry * 2 };
+        }
+        if (t === 'star') {
+            const r = node.outerRadius || 50;
+            return { x: node.x - r, y: node.y - r, width: r * 2, height: r * 2 };
+        }
+        if (t === 'diamond' || t === 'heart' || t === 'cross') {
+            const s = node.size || node.width || 50;
+            return { x: node.x - s / 2, y: node.y - s / 2, width: s, height: node.height || s };
+        }
+        if (t === 'text') {
+            return { x: node.x, y: node.y, width: node.width || 100, height: (node.fontSize || 24) * 1.5 };
+        }
+        if (t === 'youtube') {
+            return { x: node.x, y: node.y, width: node.width || 480, height: node.height || 270 };
+        }
+        if (t === 'line' || t === 'highlight' || t === 'simpleLine' || t === 'arrow') {
+            const pts = node.points || [];
+            if (pts.length < 2) return { x: 0, y: 0, width: 0, height: 0 };
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (let i = 0; i < pts.length; i += 2) {
+                minX = Math.min(minX, pts[i]);
+                maxX = Math.max(maxX, pts[i]);
+                minY = Math.min(minY, pts[i + 1]);
+                maxY = Math.max(maxY, pts[i + 1]);
+            }
+            return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+        }
+        return { x: node.x || 0, y: node.y || 0, width: node.width || 50, height: node.height || 50 };
+    }, []);
 
     const handleMouseUp = useCallback(() => {
+        // Finalize rubber-band selection
+        if (selectionRect) {
+            const { startX, startY, currentX, currentY } = selectionRect;
+            const selX = Math.min(startX, currentX);
+            const selY = Math.min(startY, currentY);
+            const selW = Math.abs(currentX - startX);
+            const selH = Math.abs(currentY - startY);
+
+            if (selW > 5 || selH > 5) {
+                // Find nodes that intersect the selection rectangle
+                const idsToSelect = [];
+                nodes.forEach(node => {
+                    const bounds = getNodeBounds(node);
+                    // Check overlap between selection rect and node bounds
+                    const overlaps = (
+                        selX < bounds.x + bounds.width &&
+                        selX + selW > bounds.x &&
+                        selY < bounds.y + bounds.height &&
+                        selY + selH > bounds.y
+                    );
+                    if (overlaps) idsToSelect.push(node.id);
+                });
+                if (idsToSelect.length > 0) {
+                    idsToSelect.forEach(id => selectNode(id, true));
+                }
+            }
+            setSelectionRect(null);
+        }
+
         if (drawingShape) {
             const { type, startX, startY, currentX, currentY } = drawingShape;
             const width = Math.abs(currentX - startX);
@@ -734,7 +827,7 @@ export default function Whiteboard() {
         isDrawing.current = false;
         currentLineId.current = null;
         isPanning.current = false;
-    }, [drawingShape, addNode, fillColor, strokeColor, strokeWidth]);
+    }, [drawingShape, selectionRect, nodes, getNodeBounds, selectNode, addNode, fillColor, strokeColor, strokeWidth]);
 
     const handleClick = useCallback((e, id) => {
         // Only respond to left mouse button
@@ -744,7 +837,7 @@ export default function Whiteboard() {
         // handleClick only handles tool-specific actions like eraser.
         if (tool === 'eraser') {
             const nodeData = nodes.find(n => n.id === id);
-            if (nodeData && nodeData.type === 'line') {
+            if (nodeData && (nodeData.type === 'line' || nodeData.type === 'highlight')) {
                 deleteNode(id);
             }
         }
@@ -1155,7 +1248,7 @@ export default function Whiteboard() {
 
     const renderNode = (node) => {
         // When using drawing tools, make nodes non-interactive so clicks pass through
-        const isDrawingTool = tool === 'shape' || tool === 'text' || tool === 'pen';
+        const isDrawingTool = tool === 'shape' || tool === 'text' || tool === 'pen' || tool === 'highlighter';
 
         const props = {
             key: node.id, id: node.id,
@@ -1169,7 +1262,13 @@ export default function Whiteboard() {
                 // Track button and prevent drag for non-left buttons
                 const button = e.evt ? e.evt.button : 0;
                 mouseButtonRef.current = button;
-                if (button !== 0) {
+                if (button === 1) {
+                    // Middle button: stop node drag but let event bubble to stage for panning
+                    if (e.target && e.target.stopDrag) {
+                        e.target.stopDrag();
+                    }
+                } else if (button !== 0) {
+                    // Right-click or other: block entirely
                     e.cancelBubble = true;
                     if (e.target && e.target.stopDrag) {
                         e.target.stopDrag();
@@ -1177,7 +1276,14 @@ export default function Whiteboard() {
                 } else if (tool === 'select') {
                     // Select (highlight) immediately on mousedown so drag is seamless
                     e.cancelBubble = true; // Prevent stage mousedown from firing
-                    selectNode(node.id, e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey || false);
+                    const isMulti = e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey || false;
+                    const alreadySelected = selectedNodeIds.includes(node.id);
+                    // If node is already in a multi-selection, don't re-select (preserve group for drag)
+                    if (alreadySelected && selectedNodeIds.length > 1 && !isMulti) {
+                        // Keep current selection — allows group drag
+                    } else {
+                        selectNode(node.id, isMulti);
+                    }
                 }
             },
             onDragStart: (e) => {
@@ -1323,6 +1429,8 @@ export default function Whiteboard() {
                 );
             case 'line':
                 return <Line {...props} points={node.points} stroke={node.stroke} strokeWidth={node.strokeWidth} hitStrokeWidth={Math.max(20, node.strokeWidth * 2)} lineCap="round" lineJoin="round" tension={0.5} />;
+            case 'highlight':
+                return <Line {...props} points={node.points} stroke={node.stroke} strokeWidth={node.strokeWidth} hitStrokeWidth={Math.max(30, node.strokeWidth * 2)} lineCap="round" lineJoin="round" tension={0.5} opacity={node.opacity || 0.4} />;
             case 'image':
                 return <ImageNode key={node.id} node={node} commonProps={props} />;
             case 'youtube':
@@ -1426,7 +1534,7 @@ export default function Whiteboard() {
             // Custom eraser cursor - a small square
             return `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23666" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="4" y1="20" x2="20" y2="4"/></svg>') 12 12, auto`;
         }
-        if (tool === 'shape' || tool === 'pen') return 'crosshair';
+        if (tool === 'shape' || tool === 'pen' || tool === 'highlighter') return 'crosshair';
         if (tool === 'text') return 'text';
         return 'default';
     };
@@ -1454,6 +1562,20 @@ export default function Whiteboard() {
                 <Layer ref={layerRef}>
                     {nodes.map(renderNode)}
                     {renderDrawingPreview()}
+                    {/* Rubber-band selection rectangle */}
+                    {selectionRect && (
+                        <Rect
+                            x={Math.min(selectionRect.startX, selectionRect.currentX)}
+                            y={Math.min(selectionRect.startY, selectionRect.currentY)}
+                            width={Math.abs(selectionRect.currentX - selectionRect.startX)}
+                            height={Math.abs(selectionRect.currentY - selectionRect.startY)}
+                            fill="rgba(59, 130, 246, 0.08)"
+                            stroke="#3b82f6"
+                            strokeWidth={1}
+                            dash={[6, 3]}
+                            listening={false}
+                        />
+                    )}
                     <Transformer
                         ref={transformerRef}
                         rotateEnabled={false}

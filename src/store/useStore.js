@@ -160,6 +160,7 @@ const useStore = create((set, get) => ({
     strokeColor: '#1e40af',
     strokeWidth: 2,
     textColor: '#000000',
+    highlighterColor: '#ffeb3b',
 
     // Undo/Redo history
     history: [],
@@ -218,6 +219,7 @@ const useStore = create((set, get) => ({
     setStrokeColor: (color) => set({ strokeColor: color }),
     setStrokeWidth: (width) => set({ strokeWidth: width }),
     setTextColor: (color) => set({ textColor: color }),
+    setHighlighterColor: (color) => set({ highlighterColor: color }),
 
     addNode: (nodeData) => {
         get().pushToHistory();

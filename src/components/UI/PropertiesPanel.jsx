@@ -26,7 +26,7 @@ export default function PropertiesPanel() {
 
     // Auto-expand when pen or text tool is active
     useEffect(() => {
-        if (tool === 'pen' || tool === 'text' || selectedNodeIds.length > 0) {
+        if (tool === 'pen' || tool === 'text' || tool === 'highlighter' || selectedNodeIds.length > 0) {
             setCollapsed(false);
         }
     }, [tool, selectedNodeIds]);
@@ -80,7 +80,7 @@ export default function PropertiesPanel() {
         }
     };
 
-    const isDrawingTool = tool === 'pen' || tool === 'text';
+    const isDrawingTool = tool === 'pen' || tool === 'text' || tool === 'highlighter';
     const currentFontSize = selectedNode?.fontSize || 24;
     const currentStyle = selectedNode?.fontStyle || 'normal';
     const isBold = currentStyle.includes('bold');

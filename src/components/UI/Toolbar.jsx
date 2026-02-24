@@ -1,7 +1,7 @@
 import {
     MousePointer2, Square, Type, Image, Youtube, Pencil, Trash2, Eraser, FileText, ChevronRight,
     Circle, Triangle, Star, Diamond, Hexagon, Minus, ArrowRight, Pentagon, Octagon, Heart, Cloud, RectangleHorizontal, Plus,
-    Undo2, Redo2, FolderOpen, Music, Video
+    Undo2, Redo2, FolderOpen, Music, Video, Highlighter
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import useStore from '../../store/useStore';
@@ -34,6 +34,11 @@ const penColors = [
     '#eab308', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899',
 ];
 
+const highlighterColors = [
+    '#ffeb3b', '#a5d6a7', '#90caf9', '#f48fb1',
+    '#ffcc80', '#ce93d8', '#ef9a9a', '#80deea',
+];
+
 const mediaOptions = [
     { id: 'image', Icon: Image, label: 'Image' },
     { id: 'pdf', Icon: FileText, label: 'PDF' },
@@ -47,6 +52,7 @@ export default function Toolbar() {
         fillColor, setFillColor,
         strokeColor, setStrokeColor, strokeWidth, setStrokeWidth,
         textColor, setTextColor,
+        highlighterColor, setHighlighterColor,
         nodes, selectedNodeIds, deleteAllNodes, deleteSelectedNodes,
         isSaving, isLoading, lastSaved,
         undo, redo, canUndo, canRedo,
@@ -57,6 +63,7 @@ export default function Toolbar() {
     const popupRef = useRef(null);
     const penBtnRef = useRef(null);
     const shapeBtnRef = useRef(null);
+    const highlighterBtnRef = useRef(null);
 
     // Close popup when clicking outside
     useEffect(() => {
@@ -159,6 +166,26 @@ export default function Toolbar() {
                     title="Pen (P)"
                 >
                     <Pencil style={{ width: 'clamp(14px, 1.2vw + 0.5vh, 22px)', height: 'clamp(14px, 1.2vw + 0.5vh, 22px)' }} />
+                    <ChevronRight className="absolute opacity-50" style={{ width: 'clamp(6px, 0.5vw, 10px)', height: 'clamp(6px, 0.5vw, 10px)', right: '2px', bottom: '2px' }} />
+                </button>
+
+                {/* Highlighter Tool */}
+                <button
+                    ref={highlighterBtnRef}
+                    onClick={() => handleToolClick('highlighter', true)}
+                    className={cn(
+                        "flex items-center justify-center rounded-lg transition-all relative group",
+                        tool === 'highlighter'
+                            ? "bg-purple-100 text-purple-600"
+                            : "text-gray-600 hover:bg-gray-100"
+                    )}
+                    style={{
+                        width: 'clamp(28px, 2.5vw + 1vh, 42px)',
+                        height: 'clamp(28px, 2.5vw + 1vh, 42px)',
+                    }}
+                    title="Highlighter (H)"
+                >
+                    <Highlighter style={{ width: 'clamp(14px, 1.2vw + 0.5vh, 22px)', height: 'clamp(14px, 1.2vw + 0.5vh, 22px)' }} />
                     <ChevronRight className="absolute opacity-50" style={{ width: 'clamp(6px, 0.5vw, 10px)', height: 'clamp(6px, 0.5vw, 10px)', right: '2px', bottom: '2px' }} />
                 </button>
 
@@ -494,6 +521,46 @@ export default function Toolbar() {
                         type="range"
                         min="1"
                         max="20"
+                        value={strokeWidth}
+                        onChange={(e) => setStrokeWidth(Number(e.target.value))}
+                        className="w-full h-1.5 accent-purple-500"
+                    />
+                    <div className="text-xs text-gray-500 mt-1">{strokeWidth}px</div>
+                </div>
+            )}
+
+            {/* Highlighter Popup - color palette and width */}
+            {activePopup === 'highlighter' && (
+                <div
+                    className="fixed bg-white rounded-xl shadow-xl border border-gray-200 p-3 z-50"
+                    style={{
+                        left: 'clamp(50px, 4vw + 2vh, 70px)',
+                        top: highlighterBtnRef.current ? `${highlighterBtnRef.current.getBoundingClientRect().top}px` : '50%',
+                        width: '200px',
+                    }}
+                >
+                    {/* Highlighter Color */}
+                    <div className="text-xs text-gray-500 mb-2">Highlighter Color</div>
+                    <div className="grid grid-cols-4 gap-2 mb-3">
+                        {highlighterColors.map(color => (
+                            <button
+                                key={color}
+                                onClick={() => setHighlighterColor(color)}
+                                className={cn(
+                                    "w-7 h-7 rounded-full transition-transform hover:scale-110",
+                                    highlighterColor === color ? "ring-2 ring-purple-500 ring-offset-1" : ""
+                                )}
+                                style={{ backgroundColor: color, opacity: 0.7 }}
+                            />
+                        ))}
+                    </div>
+
+                    {/* Width */}
+                    <div className="text-xs text-gray-500 mb-1">Width</div>
+                    <input
+                        type="range"
+                        min="2"
+                        max="50"
                         value={strokeWidth}
                         onChange={(e) => setStrokeWidth(Number(e.target.value))}
                         className="w-full h-1.5 accent-purple-500"

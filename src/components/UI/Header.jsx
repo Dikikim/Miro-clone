@@ -10,7 +10,7 @@ export default function Header() {
                 </button>
                 <div className="h-5 w-px bg-gray-200" />
                 <div className="flex flex-col">
-                    <span className="text-sm font-semibold text-gray-800">Project Brainstorm</span>
+                    <span className="text-sm font-semibold text-gray-800">KKOT</span>
                     <span className="text-xs text-gray-500">Last edited just now</span>
                 </div>
                 <button className="text-amber-400 hover:text-amber-500 transition-colors ml-1">
