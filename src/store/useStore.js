@@ -1,7 +1,13 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 
-const LOCAL_STORAGE_KEY = 'kot_state';
+const LOCAL_STORAGE_KEY_PREFIX = 'kot_state_board_';
+const BOARD_NAMES_KEY = 'kot_board_names';
+const CURRENT_BOARD_KEY = 'kot_current_board';
+const MAX_BOARDS = 6;
+const DEFAULT_BOARD_NAMES = ['Board 1', 'Board 2', 'Board 3', 'Board 4', 'Board 5', 'Board 6'];
+
+const getBoardStorageKey = (boardId) => `${LOCAL_STORAGE_KEY_PREFIX}${boardId}`;
 const MAX_HISTORY = 50;
 
 // Debounce helper
@@ -57,7 +63,8 @@ const LARGE_SRC_THRESHOLD = 100_000; // 100KB
 
 // Synchronous save — used on beforeunload and after every mutation
 // Skips IndexedDB (async) but still saves node metadata
-const saveToLocalStorageSync = (state) => {
+const saveToLocalStorageSync = (state, boardId) => {
+    const id = boardId !== undefined ? boardId : (state.currentBoardId || 0);
     try {
         const nodesForStorage = state.nodes.map((node) => {
             let result = node;
@@ -80,14 +87,15 @@ const saveToLocalStorageSync = (state) => {
             stagePosition: state.stagePosition,
             stageScale: state.stageScale,
         };
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
+        localStorage.setItem(getBoardStorageKey(id), JSON.stringify(data));
     } catch (e) {
         console.error('✗ localStorage sync save error:', e);
     }
 };
 
 // Async save — also persists large media to IndexedDB
-const saveToLocalStorage = async (state) => {
+const saveToLocalStorage = async (state, boardId) => {
+    const id = boardId !== undefined ? boardId : (state.currentBoardId || 0);
     try {
         const nodesForStorage = await Promise.all(state.nodes.map(async (node) => {
             let result = node;
@@ -107,16 +115,15 @@ const saveToLocalStorage = async (state) => {
             stagePosition: state.stagePosition,
             stageScale: state.stageScale,
         };
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
-        console.log('✓ Saved to localStorage + IndexedDB');
+        localStorage.setItem(getBoardStorageKey(id), JSON.stringify(data));
     } catch (e) {
         console.error('✗ localStorage save error:', e);
     }
 };
 
-const loadFromLocalStorage = async () => {
+const loadFromLocalStorage = async (boardId = 0) => {
     try {
-        const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+        const raw = localStorage.getItem(getBoardStorageKey(boardId));
         if (raw) {
             const data = JSON.parse(raw);
             if (data.nodes) {
@@ -135,7 +142,6 @@ const loadFromLocalStorage = async () => {
                     return result;
                 }));
             }
-            console.log(`✓ Loaded ${data.nodes?.length || 0} nodes from localStorage`);
             return data;
         }
     } catch (e) {
@@ -144,7 +150,44 @@ const loadFromLocalStorage = async () => {
     return null;
 };
 
+// Load/save board names
+const loadBoardNames = () => {
+    try {
+        const raw = localStorage.getItem(BOARD_NAMES_KEY);
+        if (raw) return JSON.parse(raw);
+    } catch (e) { /* ignore */ }
+    return [...DEFAULT_BOARD_NAMES];
+};
+
+const saveBoardNames = (names) => {
+    try {
+        localStorage.setItem(BOARD_NAMES_KEY, JSON.stringify(names));
+    } catch (e) { /* ignore */ }
+};
+
+// Load/save current board ID
+const loadCurrentBoardId = () => {
+    try {
+        const raw = localStorage.getItem(CURRENT_BOARD_KEY);
+        if (raw !== null) {
+            const id = parseInt(raw, 10);
+            if (id >= 0 && id < MAX_BOARDS) return id;
+        }
+    } catch (e) { /* ignore */ }
+    return 0;
+};
+
+const saveCurrentBoardId = (id) => {
+    try {
+        localStorage.setItem(CURRENT_BOARD_KEY, String(id));
+    } catch (e) { /* ignore */ }
+};
+
 const useStore = create((set, get) => ({
+    // Board management
+    currentBoardId: loadCurrentBoardId(),
+    boardNames: loadBoardNames(),
+
     // Canvas state
     nodes: [],
     selectedNodeIds: [],
@@ -306,20 +349,58 @@ const useStore = create((set, get) => ({
     loadData: async () => {
         set({ isLoading: true });
 
-        const localData = await loadFromLocalStorage();
+        // Load board names
+        const boardNames = loadBoardNames();
+        const currentBoardId = get().currentBoardId;
+
+        const localData = await loadFromLocalStorage(currentBoardId);
         if (localData) {
             const nodes = localData.nodes || [];
             set({
                 nodes,
+                boardNames,
                 stagePosition: localData.stagePosition || { x: 0, y: 0 },
                 stageScale: localData.stageScale || 1,
                 history: [nodes.map(node => (node.points ? { ...node, points: [...node.points] } : { ...node }))],
                 historyIndex: 0,
             });
         } else {
-            set({ history: [[]], historyIndex: 0 });
+            set({ boardNames, history: [[]], historyIndex: 0 });
         }
         set({ isLoading: false });
+    },
+
+    // --- Multi-board ---
+    switchBoard: async (targetBoardId) => {
+        if (targetBoardId === get().currentBoardId) return;
+        const state = get();
+
+        // Save current board
+        await saveToLocalStorage(state, state.currentBoardId);
+
+        // Load target board
+        const localData = await loadFromLocalStorage(targetBoardId);
+        const nodes = localData ? (localData.nodes || []) : [];
+
+        set({
+            currentBoardId: targetBoardId,
+            nodes,
+            selectedNodeIds: [],
+            stagePosition: localData ? (localData.stagePosition || { x: 0, y: 0 }) : { x: 0, y: 0 },
+            stageScale: localData ? (localData.stageScale || 1) : 1,
+            history: [nodes.map(node => (node.points ? { ...node, points: [...node.points] } : { ...node }))],
+            historyIndex: 0,
+            hasUnsavedChanges: false,
+            tool: 'select',
+        });
+        saveCurrentBoardId(targetBoardId);
+    },
+
+    renameBoard: (boardId, name) => {
+        const names = [...get().boardNames];
+        names[boardId] = name;
+        set({ boardNames: names });
+        saveBoardNames(names);
     },
 }));
 
@@ -327,8 +408,17 @@ const useStore = create((set, get) => ({
 if (typeof window !== 'undefined') {
     window.addEventListener('beforeunload', () => {
         const state = useStore.getState();
-        saveToLocalStorageSync(state);
+        saveToLocalStorageSync(state, state.currentBoardId);
     });
+
+    // Migrate old single-board data to board 0 if it exists
+    try {
+        const oldData = localStorage.getItem('kot_state');
+        if (oldData && !localStorage.getItem(getBoardStorageKey(0))) {
+            localStorage.setItem(getBoardStorageKey(0), oldData);
+            localStorage.removeItem('kot_state');
+        }
+    } catch (e) { /* ignore */ }
 }
 
 export { loadMediaFromDB, saveMediaToDB };

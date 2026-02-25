@@ -1,4 +1,5 @@
 import Whiteboard from './components/Canvas/Whiteboard';
+import Header from './components/UI/Header';
 import Toolbar from './components/UI/Toolbar';
 import BottomControls from './components/UI/BottomControls';
 import ImageUploader from './components/Upload/ImageUploader';
@@ -15,7 +16,7 @@ import useStore from './store/useStore';
 function App() {
   const {
     tool, setTool, deleteSelectedNodes, selectedNodeIds, clearSelection,
-    loadData,
+    loadData, nodes,
     undo, redo,
   } = useStore();
   const [showImageUploader, setShowImageUploader] = useState(false);
@@ -74,6 +75,16 @@ function App() {
 
       // Undo/Redo keyboard shortcuts
       if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'a' || e.key === 'A') {
+          e.preventDefault();
+          // Select all canvas objects
+          const allIds = useStore.getState().nodes.map(n => n.id);
+          if (allIds.length > 0) {
+            useStore.setState({ selectedNodeIds: allIds });
+            setTool('select');
+          }
+          return;
+        }
         if (e.key === 'z' || e.key === 'Z') {
           e.preventDefault();
           if (e.shiftKey) {
@@ -128,6 +139,9 @@ function App() {
     <div className="w-full h-full relative light" style={{ backgroundColor: '#f5f6f8' }}>
       {/* Canvas */}
       <Whiteboard />
+
+      {/* Header with board switcher */}
+      <Header />
 
       {/* UI Chrome */}
       <Toolbar />
