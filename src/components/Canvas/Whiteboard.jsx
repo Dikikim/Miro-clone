@@ -1,7 +1,10 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useState, cloneElement } from 'react';
+import AudioPlayer from '../Upload/AudioPlayer';
 import { Stage, Layer, Rect, Circle, Ellipse, Text, Transformer, Image as KonvaImage, Group, Line, RegularPolygon, Arrow, Star as KonvaStar, Shape } from 'react-konva';
 import useStore from '../../store/useStore';
 import PdfOverlay from './PdfOverlay';
+import ShapeToolbar from '../UI/ShapeToolbar';
+import FloatingTextToolbar from '../UI/FloatingTextToolbar';
 
 function useImage(src) {
     const [image, setImage] = useState(null);
@@ -24,42 +27,30 @@ function ImageNode({ node, commonProps }) {
 
 function YoutubeNode({ node, commonProps }) {
     const image = useImage(node.videoId ? `https://img.youtube.com/vi/${node.videoId}/hqdefault.jpg` : null);
-    const playBtnW = 68, playBtnH = 48;
-    const cx = node.width / 2, cy = node.height / 2;
+    const w = node.width || 480;
+    const h = node.height || 270;
+    const playBtnW = Math.min(68, w * 0.14);
+    const playBtnH = Math.min(48, h * 0.18);
+    const cx = w / 2, cy = h / 2;
+    const hintFs = Math.max(9, Math.min(12, w * 0.025));
+
+    // Don't render Konva node if playing (iframe overlay takes over)
+    if (node.playing) {
+        return (
+            <Group {...commonProps} x={node.x} y={node.y}>
+                <Rect width={w} height={h} fill="#000" cornerRadius={12} />
+            </Group>
+        );
+    }
 
     return (
         <Group {...commonProps} x={node.x} y={node.y}>
-            {/* Background */}
-            <Rect width={node.width} height={node.height} fill="#0f0f0f" cornerRadius={12} />
-
-            {/* Thumbnail image */}
-            {image && <KonvaImage listening={false} image={image} width={node.width} height={node.height} cornerRadius={12} />}
-
-            {/* YouTube play button - red rounded rectangle */}
-            <Rect
-                listening={false}
-                x={cx - playBtnW / 2}
-                y={cy - playBtnH / 2}
-                width={playBtnW}
-                height={playBtnH}
-                fill="#ff0000"
-                cornerRadius={12}
-                shadowColor="black"
-                shadowBlur={10}
-                shadowOpacity={0.5}
-            />
-
-            {/* Play triangle */}
-            <Line
-                listening={false}
-                points={[cx - 10, cy - 12, cx - 10, cy + 12, cx + 14, cy]}
-                fill="white"
-                closed
-            />
-
-            {/* "Double-click to play" hint */}
-            <Rect listening={false} x={10} y={node.height - 32} width={node.width - 20} height={22} fill="rgba(0,0,0,0.7)" cornerRadius={4} />
-            <Text listening={false} x={10} y={node.height - 28} width={node.width - 20} text="🎬 Double-click to play" fontSize={12} fill="#fff" align="center" />
+            <Rect width={w} height={h} fill="#0f0f0f" cornerRadius={12} />
+            {image && <KonvaImage listening={false} image={image} width={w} height={h} cornerRadius={12} />}
+            <Rect listening={false} x={cx - playBtnW / 2} y={cy - playBtnH / 2} width={playBtnW} height={playBtnH} fill="#ff0000" cornerRadius={12} shadowColor="black" shadowBlur={10} shadowOpacity={0.5} />
+            <Line listening={false} points={[cx - 10, cy - 12, cx - 10, cy + 12, cx + 14, cy]} fill="white" closed />
+            <Rect listening={false} x={10} y={h - 32} width={w - 20} height={22} fill="rgba(0,0,0,0.7)" cornerRadius={4} />
+            <Text listening={false} x={10} y={h - 28} width={w - 20} text="🎬 Double-click to play" fontSize={hintFs} fill="#fff" align="center" />
         </Group>
     );
 }
@@ -67,25 +58,42 @@ function YoutubeNode({ node, commonProps }) {
 function AudioNode({ node, commonProps }) {
     const w = node.width || 300;
     const h = node.height || 80;
-    const iconSize = 32;
     const fileName = node.fileName || 'Audio file';
+
+    // Proportional sizing — everything scales with node dimensions
+    const iconRadius = Math.min(w * 0.1, h * 0.35);
+    const iconCx = w * 0.13;
+    const iconCy = h / 2;
+    const noteFs = Math.max(10, iconRadius * 1.2);
+    const textX = iconCx + iconRadius + Math.max(8, w * 0.03);
+    const nameFs = Math.max(10, Math.min(16, h * 0.18, w * 0.045));
+    const hintFs = Math.max(8, Math.min(12, h * 0.14, w * 0.035));
+    const maxNameLen = Math.max(10, Math.floor((w - textX - 10) / (nameFs * 0.55)));
+    const displayName = fileName.length > maxNameLen ? fileName.substring(0, maxNameLen - 2) + '...' : fileName;
+    const cornerR = Math.min(12, w * 0.04, h * 0.15);
+    // Center text block vertically
+    const textBlockH = nameFs + hintFs + 6;
+    const textStartY = (h - textBlockH) / 2;
+
+    // If audio is currently playing, show a playing indicator
+    const isPlaying = node.playing;
 
     return (
         <Group {...commonProps} x={node.x} y={node.y}>
             {/* Background card */}
-            <Rect width={w} height={h} fill="#ffffff" stroke="#e5e7eb" strokeWidth={1} cornerRadius={12} shadowColor="black" shadowBlur={8} shadowOpacity={0.1} />
+            <Rect width={w} height={h} fill={isPlaying ? '#f5f3ff' : '#ffffff'} stroke={isPlaying ? '#8b5cf6' : '#e5e7eb'} strokeWidth={isPlaying ? 2 : 1} cornerRadius={cornerR} shadowColor="black" shadowBlur={8} shadowOpacity={0.1} />
 
             {/* Music icon circle */}
-            <Circle listening={false} x={40} y={h / 2} radius={iconSize / 2 + 8} fill="#8b5cf6" />
+            <Circle listening={false} x={iconCx} y={iconCy} radius={iconRadius} fill="#8b5cf6" />
 
-            {/* Music note icon (simplified) */}
-            <Text listening={false} x={28} y={h / 2 - 10} text="♪" fontSize={24} fill="white" />
+            {/* Music note icon */}
+            <Text listening={false} x={iconCx - noteFs * 0.4} y={iconCy - noteFs * 0.5} text={isPlaying ? '▶' : '♪'} fontSize={noteFs} fill="white" />
 
             {/* File name */}
-            <Text listening={false} x={75} y={h / 2 - 16} text={fileName.length > 30 ? fileName.substring(0, 30) + '...' : fileName} fontSize={14} fill="#1f2937" fontStyle="bold" />
+            <Text listening={false} x={textX} y={textStartY} text={displayName} fontSize={nameFs} fill="#1f2937" fontStyle="bold" width={w - textX - 10} />
 
             {/* Double-click hint */}
-            <Text listening={false} x={75} y={h / 2 + 6} text="🎧 Double-click to play" fontSize={11} fill="#6b7280" />
+            <Text listening={false} x={textX} y={textStartY + nameFs + 6} text={isPlaying ? '🔊 Playing... double-click to stop' : '🎧 Double-click to play'} fontSize={hintFs} fill={isPlaying ? '#8b5cf6' : '#6b7280'} width={w - textX - 10} />
         </Group>
     );
 }
@@ -128,9 +136,36 @@ function VideoNode({ node, commonProps }) {
 }
 
 function PdfDocumentNode({ node, commonProps }) {
-    const image = useImage(node.coverSrc);
+    const { updateNode } = useStore();
+    const [recoveredSrc, setRecoveredSrc] = useState(null);
+    const coverToUse = node.coverSrc || recoveredSrc;
+    const image = useImage(coverToUse);
     const w = node.width || 300;
     const h = node.height || 400;
+
+    // Auto-recover cover from PDF bytes in IDB if coverSrc is empty
+    useEffect(() => {
+        if (node.coverSrc && node.coverSrc.length > 10) return; // already have a valid cover
+        let cancelled = false;
+        const recover = async () => {
+            try {
+                const { loadMediaFromDB } = await import('../../store/useStore');
+                const { renderPdfPage, base64ToBytes } = await import('../Upload/PdfUploader');
+                const pdfBase64 = await loadMediaFromDB(`${node.id}_pdf`);
+                if (!pdfBase64 || cancelled) return;
+                const bytes = base64ToBytes(pdfBase64);
+                const { dataUrl } = await renderPdfPage(bytes, node.currentPage || 1, 1.5);
+                if (!cancelled) {
+                    setRecoveredSrc(dataUrl);
+                    updateNode(node.id, { coverSrc: dataUrl });
+                }
+            } catch (e) {
+                console.error('PDF cover recovery error:', e);
+            }
+        };
+        recover();
+        return () => { cancelled = true; };
+    }, [node.id, node.coverSrc, node.currentPage, updateNode]);
 
     return (
         <Group {...commonProps} x={node.x} y={node.y}>
@@ -162,15 +197,59 @@ export default function Whiteboard() {
     const isPanning = useRef(false); // Manual canvas panning state
     const lastPointer = useRef({ x: 0, y: 0 }); // Last pointer position for panning
     const dragStartPositions = useRef({}); // Track initial positions for multi-drag
-    const [editingTextId, setEditingTextId] = useState(null);
+    const editingTextIdRef = useRef(null);
+    const hideEditingTextNode = useCallback((nodeId) => {
+        editingTextIdRef.current = nodeId;
+        if (nodeId && layerRef.current) {
+            const konvaNode = layerRef.current.findOne(`#${nodeId}`);
+            if (konvaNode) {
+                // For sticky notes (Group), hide only the Text child to keep the background visible
+                if (konvaNode.getClassName() === 'Group') {
+                    const textChild = konvaNode.findOne('Text');
+                    if (textChild) { textChild.hide(); layerRef.current.batchDraw(); }
+                } else {
+                    konvaNode.hide();
+                    layerRef.current.batchDraw();
+                }
+            }
+            // Clear transformer to prevent double-border during editing
+            if (transformerRef.current) {
+                transformerRef.current.nodes([]);
+                transformerRef.current.getLayer()?.batchDraw();
+            }
+        }
+    }, []);
+    const showEditingTextNode = useCallback(() => {
+        const nodeId = editingTextIdRef.current;
+        if (nodeId && layerRef.current) {
+            const konvaNode = layerRef.current.findOne(`#${nodeId}`);
+            if (konvaNode) {
+                if (konvaNode.getClassName() === 'Group') {
+                    const textChild = konvaNode.findOne('Text');
+                    if (textChild) { textChild.show(); layerRef.current.batchDraw(); }
+                } else {
+                    konvaNode.show();
+                    layerRef.current.batchDraw();
+                }
+            }
+        }
+        editingTextIdRef.current = null;
+    }, []);
     const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
     const [drawingShape, setDrawingShape] = useState(null);
     const [selectionRect, setSelectionRect] = useState(null);
+    const [laserLines, setLaserLines] = useState([]);
+    const laserCurrentId = useRef(null);
+    const [pendingComment, setPendingComment] = useState(null); // { x, y } in canvas coords
 
     const {
         nodes, selectedNodeIds, tool, shapeType, stagePosition, stageScale,
-        fillColor, strokeColor, strokeWidth, textColor, highlighterColor,
+        fillColor, strokeColor, penStrokeWidth, highlighterStrokeWidth, objectStrokeWidth, textColor, highlighterColor,
+        cornerRadius: storeCornerRadius,
         addNode, updateNode, deleteNode, selectNode, clearSelection, setStagePosition, setStageScale,
+        showContextMenu, hideContextMenu,
+        comments, addComment,
+        theme,
     } = useStore();
 
     useEffect(() => {
@@ -234,13 +313,13 @@ export default function Whiteboard() {
 
         if (tool === 'pen') {
             isDrawing.current = true;
-            currentLineId.current = addNode({ type: 'line', points: [pos.x, pos.y], stroke: strokeColor, strokeWidth, lineCap: 'round', lineJoin: 'round' });
+            currentLineId.current = addNode({ type: 'line', points: [pos.x, pos.y], stroke: strokeColor, strokeWidth: penStrokeWidth, lineCap: 'round', lineJoin: 'round' });
             return;
         }
 
         if (tool === 'highlighter') {
             isDrawing.current = true;
-            currentLineId.current = addNode({ type: 'highlight', points: [pos.x, pos.y], stroke: highlighterColor, strokeWidth, opacity: 0.4, lineCap: 'round', lineJoin: 'round' });
+            currentLineId.current = addNode({ type: 'highlight', points: [pos.x, pos.y], stroke: highlighterColor, strokeWidth: highlighterStrokeWidth, opacity: 0.4, lineCap: 'round', lineJoin: 'round' });
             return;
         }
 
@@ -264,342 +343,138 @@ export default function Whiteboard() {
         }
 
         // Start drawing shape by dragging
-        if (tool === 'shape') {
-            setDrawingShape({ type: shapeType, startX: pos.x, startY: pos.y, currentX: pos.x, currentY: pos.y });
+        if (tool === 'shape' || tool === 'frame') {
+            setDrawingShape({ type: tool === 'frame' ? 'frame' : shapeType, startX: pos.x, startY: pos.y, currentX: pos.x, currentY: pos.y });
             return;
         }
 
-        // Only create new text on empty canvas
+        // Sticky note — place immediately (single or pile)
+        if (tool === 'sticky') {
+            const { stickyColor, stickyPileMode } = useStore.getState();
+            const color = stickyColor || '#fef08a';
+            if (stickyPileMode) {
+                // Place a pile of 3 stickers slightly offset/rotated
+                const offsets = [
+                    { dx: 4, dy: 6, rot: -3 },
+                    { dx: -3, dy: 3, rot: 2 },
+                    { dx: 0, dy: 0, rot: 0 },
+                ];
+                offsets.forEach(({ dx, dy }) => {
+                    addNode({ type: 'sticky', x: pos.x - 100 + dx, y: pos.y - 100 + dy, width: 200, height: 200, text: '', fill: color, fontSize: 18 });
+                });
+            } else {
+                addNode({ type: 'sticky', x: pos.x - 100, y: pos.y - 100, width: 200, height: 200, text: '', fill: color, fontSize: 18 });
+            }
+            useStore.getState().setTool('select');
+            return;
+        }
+
+        // Comment tool — place a comment pin with inline input
+        if (tool === 'comment') {
+            setPendingComment({ x: pos.x, y: pos.y });
+            return;
+        }
+
+        // Laser pointer — ephemeral drawing
+        if (tool === 'laser') {
+            const id = Date.now().toString();
+            laserCurrentId.current = id;
+            setLaserLines(prev => [...prev, { id, points: [pos.x, pos.y], opacity: 1 }]);
+            isDrawing.current = true;
+            return;
+        }
+
+        // Only create new text on empty canvasvs
         if (tool === 'text') {
-            const newNodeId = addNode({ type: 'text', x: pos.x, y: pos.y, text: '', fontSize: 24, fill: textColor });
-            // Auto-focus for editing after a small delay to let the node render
+            const textFontFamily = useStore.getState().textFontFamily || 'Arial';
+            const textFontSizeVal = useStore.getState().textFontSize || 24;
+            const newNodeId = addNode({ type: 'text', x: pos.x, y: pos.y, text: '', fontSize: textFontSizeVal, fill: textColor, fontFamily: textFontFamily });
+            // Select the node so FloatingTextToolbar renders, then open textarea for editing
             setTimeout(() => {
+                selectNode(newNodeId);
                 const textNode = layerRef.current?.findOne(`#${newNodeId}`);
                 if (textNode && stageRef.current) {
-                    setEditingTextId(newNodeId);
+                    hideEditingTextNode(newNodeId);
                     const stage = stageRef.current;
                     const textPosition = textNode.absolutePosition();
-                    const areaPosition = { x: stage.container().offsetLeft + textPosition.x, y: stage.container().offsetTop + textPosition.y };
-                    const toolbarWidth = 420;
-                    const toolbarX = Math.max(10, Math.min(areaPosition.x - 50, window.innerWidth - toolbarWidth - 20));
-
-                    // Current styles
-                    let currentFontSize = 24;
-                    let isBold = false;
-                    let isItalic = false;
-                    let isStrike = false;
-                    let isUnderline = false;
-                    let currentColor = '#000000';
-
-                    // Create text format toolbar
-                    const toolbar = document.createElement('div');
-                    toolbar.id = 'text-format-toolbar';
-                    toolbar.style.cssText = `
-                        position: absolute;
-                        top: ${areaPosition.y - 50}px;
-                        left: ${toolbarX}px;
-                        background: white;
-                        border-radius: 8px;
-                        box-shadow: 0 2px 16px rgba(0,0,0,0.12);
-                        padding: 4px 6px;
-                        display: flex;
-                        align-items: center;
-                        gap: 2px;
-                        z-index: 1001;
-                        border: 1px solid #e0e0e0;
-                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                    `;
-
-                    // Helper to create toolbar button
-                    const createBtn = (html, title, isActive = false, onClick = null) => {
-                        const btn = document.createElement('button');
-                        btn.innerHTML = html;
-                        btn.title = title;
-                        btn.style.cssText = `
-                            min-width: 28px;
-                            height: 28px;
-                            border: none;
-                            background: ${isActive ? '#e8e0ff' : 'transparent'};
-                            border-radius: 4px;
-                            cursor: pointer;
-                            font-size: 14px;
-                            color: ${isActive ? '#6b4fbb' : '#1a1a1a'};
-                            display: flex;
-                            align-items: center;
-                            justify-content: center;
-                            padding: 0 4px;
-                        `;
-                        btn.onmouseenter = () => { if (!isActive) btn.style.background = '#f5f5f5'; };
-                        btn.onmouseleave = () => { btn.style.background = isActive ? '#e8e0ff' : 'transparent'; };
-                        if (onClick) btn.onclick = onClick;
-                        return btn;
+                    const areaPosition = {
+                        x: stage.container().offsetLeft + textPosition.x,
+                        y: stage.container().offsetTop + textPosition.y,
                     };
 
-                    // Helper to create separator
-                    const createSep = () => {
-                        const sep = document.createElement('div');
-                        sep.style.cssText = 'width: 1px; height: 20px; background: #e0e0e0; margin: 0 4px;';
-                        return sep;
-                    };
-
-                    // T icon
-                    toolbar.appendChild(createBtn('<span style="color:#6b4fbb;font-weight:600;font-size:16px;">T</span>', 'Text'));
-
-                    // Font size with - and + buttons
-                    const sizeWrapper = document.createElement('div');
-                    sizeWrapper.style.cssText = 'display:flex;align-items:center;gap:2px;';
-
-                    // Minus button
-                    const minusBtn = createBtn('−', 'Decrease font size');
-                    minusBtn.style.minWidth = '24px';
-                    minusBtn.style.fontSize = '14px';
-                    minusBtn.onmousedown = (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        currentFontSize = Math.max(4, currentFontSize - 2);
-                        textarea.style.fontSize = `${currentFontSize * stageScale}px`;
-                        textarea.style.minHeight = `${(currentFontSize * stageScale) + 20}px`;
-                        sizeBtn.innerHTML = `${currentFontSize} <span style="font-size:10px;margin-left:2px;">▼</span>`;
-                        updateNode(newNodeId, { fontSize: currentFontSize });
-                        textarea.focus();
-                    };
-                    sizeWrapper.appendChild(minusBtn);
-
-                    // Font size dropdown
-                    const sizeDropdown = document.createElement('div');
-                    sizeDropdown.style.cssText = 'position:relative;';
-                    const sizeBtn = createBtn(`${currentFontSize} <span style="font-size:10px;margin-left:2px;">▼</span>`, 'Font size');
-                    sizeBtn.style.minWidth = '40px';
-                    sizeBtn.style.fontSize = '12px';
-                    sizeBtn.style.color = '#1a1a1a';
-                    sizeBtn.style.fontWeight = '500';
-
-                    const sizeMenu = document.createElement('div');
-                    sizeMenu.style.cssText = 'position:absolute;top:100%;left:0;background:white;border:1px solid #e0e0e0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:4px;display:none;z-index:1002;max-height:200px;overflow-y:auto;min-width:60px;';
-                    [4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64, 72, 96, 128].forEach(size => {
-                        const sizeOption = document.createElement('div');
-                        sizeOption.textContent = size;
-                        sizeOption.style.cssText = 'padding:6px 12px;cursor:pointer;font-size:13px;border-radius:4px;color:#1a1a1a;';
-                        sizeOption.onmouseenter = () => sizeOption.style.background = '#f5f5f5';
-                        sizeOption.onmouseleave = () => sizeOption.style.background = 'transparent';
-                        sizeOption.onmousedown = (e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            currentFontSize = size;
-                            textarea.style.fontSize = `${size * stageScale}px`;
-                            textarea.style.minHeight = `${(size * stageScale) + 20}px`;
-                            sizeBtn.innerHTML = `${size} <span style="font-size:10px;margin-left:2px;">▼</span>`;
-                            updateNode(newNodeId, { fontSize: size });
-                            sizeMenu.style.display = 'none';
-                            textarea.focus();
-                        };
-                        sizeMenu.appendChild(sizeOption);
-                    });
-                    sizeBtn.onmousedown = (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        sizeMenu.style.display = sizeMenu.style.display === 'none' ? 'block' : 'none';
-                    };
-                    sizeDropdown.appendChild(sizeBtn);
-                    sizeDropdown.appendChild(sizeMenu);
-                    sizeWrapper.appendChild(sizeDropdown);
-
-                    // Plus button
-                    const plusBtn = createBtn('+', 'Increase font size');
-                    plusBtn.style.minWidth = '24px';
-                    plusBtn.style.fontSize = '14px';
-                    plusBtn.onmousedown = (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        currentFontSize = Math.min(200, currentFontSize + 2);
-                        textarea.style.fontSize = `${currentFontSize * stageScale}px`;
-                        textarea.style.minHeight = `${(currentFontSize * stageScale) + 20}px`;
-                        sizeBtn.innerHTML = `${currentFontSize} <span style="font-size:10px;margin-left:2px;">▼</span>`;
-                        updateNode(newNodeId, { fontSize: currentFontSize });
-                        textarea.focus();
-                    };
-                    sizeWrapper.appendChild(plusBtn);
-
-                    toolbar.appendChild(sizeWrapper);
-
-                    toolbar.appendChild(createSep());
-
-                    // Bold
-                    const boldBtn = createBtn('<b>B</b>', 'Bold', isBold, () => {
-                        isBold = !isBold;
-                        boldBtn.style.background = isBold ? '#e8e0ff' : 'transparent';
-                        boldBtn.style.color = isBold ? '#6b4fbb' : '#1a1a1a';
-                        textarea.style.fontWeight = isBold ? 'bold' : 'normal';
-                        updateNode(newNodeId, { fontStyle: isBold ? (isItalic ? 'bold italic' : 'bold') : (isItalic ? 'italic' : 'normal') });
-                    });
-                    toolbar.appendChild(boldBtn);
-
-                    // Italic
-                    const italicBtn = createBtn('<i>I</i>', 'Italic', isItalic, () => {
-                        isItalic = !isItalic;
-                        italicBtn.style.background = isItalic ? '#e8e0ff' : 'transparent';
-                        italicBtn.style.color = isItalic ? '#6b4fbb' : '#1a1a1a';
-                        textarea.style.fontStyle = isItalic ? 'italic' : 'normal';
-                        updateNode(newNodeId, { fontStyle: isBold ? (isItalic ? 'bold italic' : 'bold') : (isItalic ? 'italic' : 'normal') });
-                    });
-                    toolbar.appendChild(italicBtn);
-
-                    // Strikethrough
-                    const strikeBtn = createBtn('<s>S</s>', 'Strikethrough', isStrike, () => {
-                        isStrike = !isStrike;
-                        isUnderline = false;
-                        strikeBtn.style.background = isStrike ? '#e8e0ff' : 'transparent';
-                        underlineBtn.style.background = 'transparent';
-                        textarea.style.textDecoration = isStrike ? 'line-through' : 'none';
-                        updateNode(newNodeId, { textDecoration: isStrike ? 'line-through' : 'none' });
-                    });
-                    toolbar.appendChild(strikeBtn);
-
-                    // Underline
-                    const underlineBtn = createBtn('<u>U</u>', 'Underline', isUnderline, () => {
-                        isUnderline = !isUnderline;
-                        isStrike = false;
-                        underlineBtn.style.background = isUnderline ? '#e8e0ff' : 'transparent';
-                        strikeBtn.style.background = 'transparent';
-                        textarea.style.textDecoration = isUnderline ? 'underline' : 'none';
-                        updateNode(newNodeId, { textDecoration: isUnderline ? 'underline' : 'none' });
-                    });
-                    toolbar.appendChild(underlineBtn);
-
-                    toolbar.appendChild(createSep());
-
-                    // Highlight (yellow background)
-                    let isHighlight = false;
-                    const highlightBtn = createBtn('<span style="background:#ffeb3b;padding:0 3px;border-radius:2px;">A</span>', 'Highlight', false, () => {
-                        isHighlight = !isHighlight;
-                        highlightBtn.style.background = isHighlight ? '#e8e0ff' : 'transparent';
-                        textarea.style.backgroundColor = isHighlight ? '#ffeb3b' : 'white';
-                    });
-                    toolbar.appendChild(highlightBtn);
-
-                    // Color palette dropdown
-                    const colorWrapper = document.createElement('div');
-                    colorWrapper.style.cssText = 'position:relative;display:flex;';
-                    const colorBtn = createBtn('<span style="border-bottom:2px solid ' + currentColor + ';">A</span>', 'Text color');
-
-                    // Create color palette dropdown
-                    const colorPalette = document.createElement('div');
-                    colorPalette.style.cssText = `
-                        position: absolute;
-                        top: 36px;
-                        left: 0;
-                        background: white;
-                        border-radius: 8px;
-                        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-                        padding: 8px;
-                        display: none;
-                        grid-template-columns: repeat(6, 1fr);
-                        gap: 4px;
-                        z-index: 1002;
-                        border: 1px solid #e0e0e0;
-                    `;
-
-                    const paletteColors = [
-                        '#000000', '#374151', '#6b7280', '#ef4444', '#f97316',
-                        '#eab308', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899', '#ffffff'
-                    ];
-
-                    paletteColors.forEach(color => {
-                        const colorOption = document.createElement('button');
-                        colorOption.style.cssText = `
-                            width: 24px;
-                            height: 24px;
-                            border-radius: 4px;
-                            border: ${color === '#ffffff' ? '1px solid #e0e0e0' : 'none'};
-                            background: ${color};
-                            cursor: pointer;
-                            transition: transform 0.1s;
-                        `;
-                        colorOption.onmouseenter = () => colorOption.style.transform = 'scale(1.1)';
-                        colorOption.onmouseleave = () => colorOption.style.transform = 'scale(1)';
-                        colorOption.onclick = (e) => {
-                            e.stopPropagation();
-                            currentColor = color;
-                            textarea.style.color = currentColor;
-                            colorBtn.innerHTML = '<span style="border-bottom:2px solid ' + currentColor + ';">A</span>';
-                            updateNode(newNodeId, { fill: currentColor });
-                            colorPalette.style.display = 'none';
-                        };
-                        colorPalette.appendChild(colorOption);
-                    });
-
-                    colorBtn.onclick = (e) => {
-                        e.stopPropagation();
-                        colorPalette.style.display = colorPalette.style.display === 'none' ? 'grid' : 'none';
-                    };
-
-                    colorWrapper.appendChild(colorBtn);
-                    colorWrapper.appendChild(colorPalette);
-                    toolbar.appendChild(colorWrapper);
-
-                    document.body.appendChild(toolbar);
-
-                    // Close dropdown when clicking outside
-                    const closeDropdownOnClickOutside = (e) => {
-                        if (!sizeDropdown.contains(e.target)) {
-                            sizeMenu.style.display = 'none';
-                        }
-                    };
-                    document.addEventListener('mousedown', closeDropdownOnClickOutside);
-
-                    // Create textarea - expands horizontally
+                    // Create bare textarea — FloatingTextToolbar handles formatting
                     const textarea = document.createElement('textarea');
+                    textarea.setAttribute('data-text-editor', 'true');
                     document.body.appendChild(textarea);
                     textarea.value = '';
                     textarea.placeholder = 'Type something';
                     textarea.rows = 1;
+                    const currentFontFam = useStore.getState().textFontFamily || 'Arial';
+                    const currentFontSz = useStore.getState().textFontSize || 24;
                     textarea.style.cssText = `
                         position: absolute;
-                        top: ${areaPosition.y}px;
-                        left: ${areaPosition.x}px;
+                        top: ${areaPosition.y - 2}px;
+                        left: ${areaPosition.x - 2}px;
                         min-width: 100px;
                         width: auto;
-                        font-size: ${24 * stageScale}px;
-                        border: 1px dashed #6b4fbb;
-                        padding: 8px 12px;
-                        background: transparent;
-                        color: #000000;
+                        font-size: ${currentFontSz * stageScale}px;
+                        border: 2px solid #0ea5e9;
+                        padding: 2px 4px;
+                        background: rgba(255,255,255,0.95);
+                        color: ${textColor};
                         outline: none;
                         resize: none;
                         line-height: 1.3;
-                        font-family: Arial, sans-serif;
+                        font-family: '${currentFontFam}', sans-serif;
                         z-index: 1000;
-                        border-radius: 4px;
+                        border-radius: 2px;
                         white-space: pre-wrap;
                         word-wrap: break-word;
                         scrollbar-width: none;
                         -ms-overflow-style: none;
+                        box-sizing: border-box;
                     `;
                     textarea.style.setProperty('-webkit-scrollbar', 'none');
 
-                    // Auto-expand width and height as user types
+                    // Style sync from FloatingTextToolbar — keeps textarea in sync with node style changes
+                    let prevListType = null;
+                    const unsubStyleSync = useStore.subscribe((state) => {
+                        const updatedNode = state.nodes.find(n => n.id === newNodeId);
+                        if (!updatedNode || textareaRemoved) return;
+                        const fs = updatedNode.fontStyle || 'normal';
+                        textarea.style.fontWeight = fs.includes('bold') ? 'bold' : 'normal';
+                        textarea.style.fontStyle = fs.includes('italic') ? 'italic' : 'normal';
+                        textarea.style.textDecoration = updatedNode.textDecoration === 'underline' ? 'underline' : updatedNode.textDecoration === 'line-through' ? 'line-through' : 'none';
+                        textarea.style.fontFamily = `'${updatedNode.fontFamily || 'Arial'}', sans-serif`;
+                        textarea.style.fontSize = `${(updatedNode.fontSize || 24) * stageScale}px`;
+                        textarea.style.color = updatedNode.fill || '#000000';
+                        // Force-sync textarea content when list type changes
+                        const curListType = updatedNode.listType || null;
+                        if (curListType !== prevListType) {
+                            prevListType = curListType;
+                            textarea.value = updatedNode.text || '';
+                            textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+                            autoExpand();
+                        }
+                        autoExpand();
+                    });
+
+                    // Reads current styles from textarea.style so it picks up live changes
                     const autoExpand = () => {
-                        // Measure width based on longest line
+                        const curFontSize = textarea.style.fontSize || `${currentFontSz * stageScale}px`;
+                        const curFontFamily = textarea.style.fontFamily || `'${currentFontFam}', sans-serif`;
+                        const curFontWeight = textarea.style.fontWeight || 'normal';
                         const lines = textarea.value.split('\n');
                         let maxWidth = 100;
                         lines.forEach(line => {
                             const tempSpan = document.createElement('span');
-                            tempSpan.style.cssText = `
-                                position: absolute;
-                                visibility: hidden;
-                                white-space: nowrap;
-                                font-size: ${24 * stageScale}px;
-                                font-family: Arial, sans-serif;
-                                padding: 0;
-                            `;
+                            tempSpan.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font-size:${curFontSize};font-family:${curFontFamily};font-weight:${curFontWeight};padding:0;`;
                             tempSpan.textContent = line || textarea.placeholder;
                             document.body.appendChild(tempSpan);
                             maxWidth = Math.max(maxWidth, tempSpan.offsetWidth + 30);
                             tempSpan.remove();
                         });
                         textarea.style.width = `${maxWidth}px`;
-
-                        // Expand height using scrollHeight
                         textarea.style.height = 'auto';
                         textarea.style.height = `${textarea.scrollHeight}px`;
                     };
@@ -607,34 +482,47 @@ export default function Whiteboard() {
                     autoExpand();
                     textarea.focus();
 
+                    let textareaRemoved = false;
                     const removeTextarea = (save = true) => {
+                        if (textareaRemoved) return;
+                        textareaRemoved = true;
+                        unsubStyleSync(); // Stop watching for style changes
                         if (save && textarea.value.trim()) {
                             updateNode(newNodeId, { text: textarea.value });
-                        } else {
-                            // Cancel - delete the node
+                        } else if (!save || !textarea.value.trim()) {
                             deleteNode(newNodeId);
                         }
                         textarea.remove();
-                        toolbar.remove();
-                        document.removeEventListener('mousedown', closeDropdownOnClickOutside);
-                        setEditingTextId(null);
+                        showEditingTextNode();
                     };
 
                     textarea.addEventListener('blur', (e) => {
-                        if (e.relatedTarget && toolbar.contains(e.relatedTarget)) {
-                            textarea.focus();
-                            return;
+                        // If focus moved to the floating toolbar, don't close
+                        const related = e.relatedTarget;
+                        if (related) {
+                            const toolbar = related.closest('[data-floating-toolbar]');
+                            if (toolbar) {
+                                // Re-focus textarea after toolbar interaction
+                                setTimeout(() => { if (!textareaRemoved) textarea.focus(); }, 0);
+                                return;
+                            }
                         }
-                        removeTextarea(true);
+                        // Delay removal slightly to allow toolbar mousedown to re-focus
+                        setTimeout(() => {
+                            if (!textareaRemoved && !document.activeElement?.closest('[data-floating-toolbar]')) {
+                                removeTextarea(true);
+                            }
+                        }, 150);
                     });
                     textarea.addEventListener('keydown', (e) => {
-                        if ((e.key === 'Enter' && (e.ctrlKey || e.shiftKey))) { e.preventDefault(); removeTextarea(true); }
+                        if (e.key === 'Enter' && (e.ctrlKey || e.shiftKey)) { e.preventDefault(); removeTextarea(true); }
                         if (e.key === 'Escape') { e.preventDefault(); removeTextarea(false); }
                     });
                 }
             }, 50);
+            return;
         }
-    }, [tool, shapeType, fillColor, strokeColor, strokeWidth, highlighterColor, addNode, updateNode, deleteNode, clearSelection, getPos, nodes, stageScale]);
+    }, [tool, shapeType, fillColor, strokeColor, penStrokeWidth, highlighterStrokeWidth, objectStrokeWidth, highlighterColor, addNode, updateNode, deleteNode, clearSelection, selectNode, getPos, nodes, stageScale, textColor, hideEditingTextNode, showEditingTextNode]);
 
     const handleMouseMove = useCallback((e) => {
         // Manual panning — move the stage position by the mouse delta (middle button)
@@ -675,6 +563,16 @@ export default function Whiteboard() {
             return;
         }
 
+        // Laser pointer — accumulate points without touching store
+        if (isDrawing.current && tool === 'laser' && laserCurrentId.current) {
+            setLaserLines(prev => prev.map(l =>
+                l.id === laserCurrentId.current
+                    ? { ...l, points: [...l.points, pos.x, pos.y] }
+                    : l
+            ));
+            return;
+        }
+
         if (tool === 'eraser' && e.evt.buttons === 1) {
             const target = e.target;
             if (target !== target.getStage()) {
@@ -685,7 +583,7 @@ export default function Whiteboard() {
                 }
             }
         }
-    }, [tool, nodes, updateNode, deleteNode, getPos, drawingShape, selectionRect]);
+    }, [tool, nodes, updateNode, deleteNode, getPos, drawingShape, selectionRect, setStagePosition]);
 
     // Helper to compute bounding box for any node type
     const getNodeBounds = useCallback((node) => {
@@ -743,6 +641,7 @@ export default function Whiteboard() {
                 // Find nodes that intersect the selection rectangle
                 const idsToSelect = [];
                 nodes.forEach(node => {
+                    if (node.locked) return; // Skip locked nodes
                     const bounds = getNodeBounds(node);
                     // Check overlap between selection rect and node bounds
                     const overlaps = (
@@ -771,14 +670,14 @@ export default function Whiteboard() {
             const size = Math.max(20, Math.max(width, height));
 
             if (width > 5 || height > 5) {
-                const baseProps = { fill: fillColor, stroke: strokeColor, strokeWidth };
+                const baseProps = { fill: fillColor, stroke: strokeColor, strokeWidth: objectStrokeWidth };
 
                 switch (type) {
                     case 'rectangle':
-                        addNode({ type: 'rectangle', x, y, width: Math.max(20, width), height: Math.max(20, height), ...baseProps });
+                        addNode({ type: 'rectangle', x, y, width: Math.max(20, width), height: Math.max(20, height), cornerRadius: storeCornerRadius, ...baseProps });
                         break;
                     case 'roundedRect':
-                        addNode({ type: 'roundedRect', x, y, width: Math.max(20, width), height: Math.max(20, height), cornerRadius: 15, ...baseProps });
+                        addNode({ type: 'roundedRect', x, y, width: Math.max(20, width), height: Math.max(20, height), cornerRadius: storeCornerRadius || 15, ...baseProps });
                         break;
                     case 'circle':
                         addNode({ type: 'circle', x: centerX, y: centerY, radius: size / 2, ...baseProps });
@@ -811,7 +710,10 @@ export default function Whiteboard() {
                         addNode({ type: 'octagon', x: centerX, y: centerY, radius: size / 2, ...baseProps });
                         break;
                     case 'heart':
-                        addNode({ type: 'heart', x: centerX, y: centerY, size: size, ...baseProps });
+                        addNode({ type: 'heart', x, y, width: Math.max(20, width), height: Math.max(20, height), ...baseProps });
+                        break;
+                    case 'rhombus':
+                        addNode({ type: 'rhombus', x: centerX, y: centerY, width: Math.max(20, width), height: Math.max(20, height), cornerRadius: storeCornerRadius, ...baseProps });
                         break;
                     case 'cloud':
                         addNode({ type: 'cloud', x, y, width: Math.max(40, width), height: Math.max(30, height), ...baseProps });
@@ -819,15 +721,33 @@ export default function Whiteboard() {
                     case 'cross':
                         addNode({ type: 'cross', x: centerX, y: centerY, size: size, ...baseProps });
                         break;
+                    case 'frame':
+                        addNode({ type: 'frame', x, y, width: Math.max(60, width), height: Math.max(60, height), label: 'Frame', stroke: '#6366f1', strokeWidth: 2 });
+                        break;
                 }
             }
             setDrawingShape(null);
         }
 
+        // Laser pointer — start fade
+        if (tool === 'laser' && laserCurrentId.current) {
+            const fadeId = laserCurrentId.current;
+            laserCurrentId.current = null;
+            const fadeInterval = setInterval(() => {
+                setLaserLines(prev => {
+                    const updated = prev.map(l =>
+                        l.id === fadeId ? { ...l, opacity: l.opacity - 0.05 } : l
+                    ).filter(l => l.opacity > 0);
+                    if (!updated.find(l => l.id === fadeId)) clearInterval(fadeInterval);
+                    return updated;
+                });
+            }, 100);
+        }
+
         isDrawing.current = false;
         currentLineId.current = null;
         isPanning.current = false;
-    }, [drawingShape, selectionRect, nodes, getNodeBounds, selectNode, addNode, fillColor, strokeColor, strokeWidth]);
+    }, [drawingShape, selectionRect, nodes, getNodeBounds, selectNode, addNode, fillColor, strokeColor, objectStrokeWidth, storeCornerRadius, tool]);
 
     const handleClick = useCallback((e, id) => {
         // Only respond to left mouse button
@@ -848,328 +768,147 @@ export default function Whiteboard() {
         if (e.evt && e.evt.button !== 0) return;
         e.cancelBubble = true;
 
-        // YouTube - play video
+        // YouTube - play video inline inside the node box
         if (node.type === 'youtube' && node.videoId) {
-            if (window.playYoutubeVideo) {
-                window.playYoutubeVideo(node.videoId);
-            }
+            updateNode(node.id, { playing: !node.playing });
             return;
         }
 
-        // Audio - play audio file
+        // Audio - play audio inline
         if (node.type === 'audio' && node.src) {
-            if (window.playAudioFile) {
-                window.playAudioFile(node.src, node.fileName);
-            }
+            updateNode(node.id, { playing: !node.playing });
             return;
         }
 
-        // Video - play video file
+        // Video - play video file inline
         if (node.type === 'video' && node.src) {
-            if (window.playVideoFile) {
-                window.playVideoFile(node.src, node.fileName);
-            }
+            updateNode(node.id, { playing: !node.playing });
             return;
         }
 
-        // Text - always edit on double-click, regardless of tool
-        if (node.type !== 'text') return;
-        setEditingTextId(node.id);
+        // Text & Sticky - edit on double-click
+        if (node.type !== 'text' && node.type !== 'sticky') return;
 
+        // Clean up any previous text editing overlay
+        const oldToolbar = document.getElementById('text-format-toolbar');
+        if (oldToolbar) oldToolbar.remove();
+        document.querySelectorAll('textarea[data-text-editor]').forEach(el => el.remove());
+
+        // Grab position data BEFORE hiding the Konva node
         const stage = stageRef.current;
         const textNode = layerRef.current.findOne(`#${node.id}`);
         if (!stage || !textNode) return;
 
         const textPosition = textNode.absolutePosition();
         const areaPosition = { x: stage.container().offsetLeft + textPosition.x, y: stage.container().offsetTop + textPosition.y };
-        const toolbarWidth = 420;
-        const toolbarX = Math.max(10, Math.min(areaPosition.x - 50, window.innerWidth - toolbarWidth - 20));
 
-        // Current styles
-        let currentFontSize = node.fontSize || 24;
-        let currentStyle = node.fontStyle || 'normal';
-        let isBold = currentStyle.includes('bold');
-        let isItalic = currentStyle.includes('italic');
-        let isStrike = node.textDecoration === 'line-through';
-        let isUnderline = node.textDecoration === 'underline';
-        let currentAlign = node.align || 'left';
-        let currentColor = node.fill || '#000000';
-
-        // Create floating toolbar
-        const toolbar = document.createElement('div');
-        toolbar.id = 'text-format-toolbar';
-        toolbar.style.cssText = `
-            position: absolute;
-            top: ${areaPosition.y - 50}px;
-            left: ${toolbarX}px;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 16px rgba(0,0,0,0.12);
-            padding: 4px 6px;
-            display: flex;
-            align-items: center;
-            gap: 2px;
-            z-index: 1001;
-            border: 1px solid #e0e0e0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        `;
-
-        // Helper to create toolbar button
-        const createBtn = (html, title, isActive = false, onClick = null) => {
-            const btn = document.createElement('button');
-            btn.innerHTML = html;
-            btn.title = title;
-            btn.style.cssText = `
-                min-width: 28px;
-                height: 28px;
-                border: none;
-                background: ${isActive ? '#e8e0ff' : 'transparent'};
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 14px;
-                color: ${isActive ? '#6b4fbb' : '#1a1a1a'};
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                padding: 0 4px;
-            `;
-            btn.onmouseenter = () => { if (!isActive) btn.style.background = '#f5f5f5'; };
-            btn.onmouseleave = () => { btn.style.background = isActive ? '#e8e0ff' : 'transparent'; };
-            if (onClick) btn.onclick = onClick;
-            return btn;
-        };
-
-        // Helper to create separator
-        const createSep = () => {
-            const sep = document.createElement('div');
-            sep.style.cssText = 'width: 1px; height: 20px; background: #e0e0e0; margin: 0 4px;';
-            return sep;
-        };
-
-        // T icon (text type indicator)
-        const tIcon = createBtn('<span style="color:#6b4fbb;font-weight:600;font-size:16px;">T</span>', 'Text');
-        toolbar.appendChild(tIcon);
-
-        // Font size with - and + buttons
-        const sizeWrapper = document.createElement('div');
-        sizeWrapper.style.cssText = 'display:flex;align-items:center;gap:2px;';
-
-        // Minus button
-        const minusBtn = createBtn('−', 'Decrease font size');
-        minusBtn.style.minWidth = '24px';
-        minusBtn.style.fontSize = '14px';
-        minusBtn.onmousedown = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            currentFontSize = Math.max(4, currentFontSize - 2);
-            textarea.style.fontSize = `${currentFontSize * stageScale}px`;
-            textarea.style.minHeight = `${(currentFontSize * stageScale) + 20}px`;
-            sizeBtn.innerHTML = `${currentFontSize} <span style="font-size:10px;margin-left:2px;">▼</span>`;
-            updateNode(node.id, { fontSize: currentFontSize });
-            textarea.focus();
-        };
-        sizeWrapper.appendChild(minusBtn);
-
-        // Font size dropdown
-        const sizeDropdown = document.createElement('div');
-        sizeDropdown.style.cssText = 'position:relative;';
-        const sizeBtn = createBtn(`${currentFontSize} <span style="font-size:10px;margin-left:2px;">▼</span>`, 'Font size');
-        sizeBtn.style.minWidth = '40px';
-        sizeBtn.style.fontSize = '12px';
-        sizeBtn.style.color = '#1a1a1a';
-        sizeBtn.style.fontWeight = '500';
-
-        const sizeMenu = document.createElement('div');
-        sizeMenu.style.cssText = 'position:absolute;top:100%;left:0;background:white;border:1px solid #e0e0e0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:4px;display:none;z-index:1002;max-height:200px;overflow-y:auto;min-width:60px;';
-        [4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64, 72, 96, 128].forEach(size => {
-            const sizeOption = document.createElement('div');
-            sizeOption.textContent = size;
-            sizeOption.style.cssText = 'padding:6px 12px;cursor:pointer;font-size:13px;border-radius:4px;color:#1a1a1a;';
-            sizeOption.onmouseenter = () => sizeOption.style.background = '#f5f5f5';
-            sizeOption.onmouseleave = () => sizeOption.style.background = 'transparent';
-            sizeOption.onmousedown = (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                currentFontSize = size;
-                textarea.style.fontSize = `${size * stageScale}px`;
-                textarea.style.minHeight = `${(size * stageScale) + 20}px`;
-                sizeBtn.innerHTML = `${size} <span style="font-size:10px;margin-left:2px;">▼</span>`;
-                updateNode(node.id, { fontSize: size });
-                sizeMenu.style.display = 'none';
-                textarea.focus();
-            };
-            sizeMenu.appendChild(sizeOption);
-        });
-        sizeBtn.onmousedown = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            sizeMenu.style.display = sizeMenu.style.display === 'none' ? 'block' : 'none';
-        };
-        sizeDropdown.appendChild(sizeBtn);
-        sizeDropdown.appendChild(sizeMenu);
-        sizeWrapper.appendChild(sizeDropdown);
-
-        // Plus button
-        const plusBtn = createBtn('+', 'Increase font size');
-        plusBtn.style.minWidth = '24px';
-        plusBtn.style.fontSize = '14px';
-        plusBtn.onmousedown = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            currentFontSize = Math.min(200, currentFontSize + 2);
-            textarea.style.fontSize = `${currentFontSize * stageScale}px`;
-            textarea.style.minHeight = `${(currentFontSize * stageScale) + 20}px`;
-            sizeBtn.innerHTML = `${currentFontSize} <span style="font-size:10px;margin-left:2px;">▼</span>`;
-            updateNode(node.id, { fontSize: currentFontSize });
-            textarea.focus();
-        };
-        sizeWrapper.appendChild(plusBtn);
-
-        toolbar.appendChild(sizeWrapper);
-
-        toolbar.appendChild(createSep());
-
-        // Bold
-        const boldBtn = createBtn('<b>B</b>', 'Bold (Ctrl+B)', isBold, () => {
-            isBold = !isBold;
-            currentStyle = isBold ? (isItalic ? 'bold italic' : 'bold') : (isItalic ? 'italic' : 'normal');
-            boldBtn.style.background = isBold ? '#e8e0ff' : 'transparent';
-            boldBtn.style.color = isBold ? '#6b4fbb' : '#1a1a1a';
-            textarea.style.fontWeight = isBold ? 'bold' : 'normal';
-            updateNode(node.id, { fontStyle: currentStyle });
-        });
-        toolbar.appendChild(boldBtn);
-
-        // Italic
-        const italicBtn = createBtn('<i>I</i>', 'Italic (Ctrl+I)', isItalic, () => {
-            isItalic = !isItalic;
-            currentStyle = isBold ? (isItalic ? 'bold italic' : 'bold') : (isItalic ? 'italic' : 'normal');
-            italicBtn.style.background = isItalic ? '#e8e0ff' : 'transparent';
-            italicBtn.style.color = isItalic ? '#6b4fbb' : '#1a1a1a';
-            textarea.style.fontStyle = isItalic ? 'italic' : 'normal';
-            updateNode(node.id, { fontStyle: currentStyle });
-        });
-        toolbar.appendChild(italicBtn);
-
-        // Strikethrough
-        const strikeBtn = createBtn('<s>S</s>', 'Strikethrough', isStrike, () => {
-            isStrike = !isStrike;
-            isUnderline = false;
-            strikeBtn.style.background = isStrike ? '#e8e0ff' : 'transparent';
-            strikeBtn.style.color = isStrike ? '#6b4fbb' : '#1a1a1a';
-            underlineBtn.style.background = 'transparent';
-            underlineBtn.style.color = '#1a1a1a';
-            textarea.style.textDecoration = isStrike ? 'line-through' : 'none';
-            updateNode(node.id, { textDecoration: isStrike ? 'line-through' : 'none' });
-        });
-        toolbar.appendChild(strikeBtn);
-
-        // Underline
-        const underlineBtn = createBtn('<u>U</u>', 'Underline', isUnderline, () => {
-            isUnderline = !isUnderline;
-            isStrike = false;
-            underlineBtn.style.background = isUnderline ? '#e8e0ff' : 'transparent';
-            underlineBtn.style.color = isUnderline ? '#6b4fbb' : '#1a1a1a';
-            strikeBtn.style.background = 'transparent';
-            strikeBtn.style.color = '#1a1a1a';
-            textarea.style.textDecoration = isUnderline ? 'underline' : 'none';
-            updateNode(node.id, { textDecoration: isUnderline ? 'underline' : 'none' });
-        });
-        toolbar.appendChild(underlineBtn);
-
-        toolbar.appendChild(createSep());
-
-        // Highlight (yellow background)
-        let isHighlight = false;
-        const highlightBtn = createBtn('<span style="background:#ffeb3b;padding:0 3px;border-radius:2px;">A</span>', 'Highlight', false, () => {
-            isHighlight = !isHighlight;
-            highlightBtn.style.background = isHighlight ? '#e8e0ff' : 'transparent';
-            textarea.style.backgroundColor = isHighlight ? '#ffeb3b' : 'white';
-        });
-        toolbar.appendChild(highlightBtn);
-
-        // Text color
-        const colorWrapper = document.createElement('div');
-        colorWrapper.style.cssText = 'position:relative;display:flex;';
-        const colorBtn = createBtn('<span style="border-bottom:2px solid ' + currentColor + ';">A</span>', 'Text color');
-        const colorInput = document.createElement('input');
-        colorInput.type = 'color';
-        colorInput.value = currentColor;
-        colorInput.style.cssText = 'position:absolute;opacity:0;width:28px;height:28px;cursor:pointer;';
-        colorInput.oninput = () => {
-            currentColor = colorInput.value;
-            textarea.style.color = currentColor;
-            colorBtn.innerHTML = '<span style="border-bottom:2px solid ' + currentColor + ';">A</span>';
-            updateNode(node.id, { fill: currentColor });
-        };
-        colorWrapper.appendChild(colorInput);
-        colorWrapper.appendChild(colorBtn);
-        toolbar.appendChild(colorWrapper);
-
-        document.body.appendChild(toolbar);
-
-        // Close dropdown when clicking outside
-        const closeDropdownOnClickOutside = (e) => {
-            if (!sizeDropdown.contains(e.target)) {
-                sizeMenu.style.display = 'none';
-            }
-        };
-        document.addEventListener('mousedown', closeDropdownOnClickOutside);
+        // Hide the Konva text node BEFORE creating the textarea to prevent double-layer overlay
+        hideEditingTextNode(node.id);
 
         // Create textarea - expands horizontally
         const textarea = document.createElement('textarea');
+        textarea.setAttribute('data-text-editor', 'true');
+        textarea.setAttribute('data-editing-node-id', node.id);
         document.body.appendChild(textarea);
         textarea.value = node.text;
         textarea.placeholder = 'Type something';
         textarea.rows = 1;
+        const _fs = node.fontSize || 24;
+        const _ff = node.fontFamily || 'Arial';
+        const _style = node.fontStyle || 'normal';
+        // For sticky notes, use textColor; for text nodes, use fill
+        const _color = node.type === 'sticky' ? (node.textColor || '#1a1a1a') : (node.fill || '#000000');
+        const _align = node.align || 'left';
+        const _bold = _style.includes('bold');
+        const _italic = _style.includes('italic');
+        const _under = node.textDecoration === 'underline';
+        const _strike = node.textDecoration === 'line-through';
         textarea.style.cssText = `
             position: absolute;
-            top: ${areaPosition.y}px;
-            left: ${areaPosition.x}px;
+            top: ${areaPosition.y - 2}px;
+            left: ${areaPosition.x - 2}px;
             min-width: 100px;
             width: auto;
-            font-size: ${node.fontSize * stageScale}px;
-            border: 1px dashed #6b4fbb;
-            padding: 8px 12px;
+            font-size: ${_fs * stageScale}px;
+            border: 2px solid #0ea5e9;
+            padding: 2px 4px;
             background: transparent;
-            color: ${currentColor};
+            color: ${_color};
             outline: none;
             resize: none;
             line-height: 1.3;
-            font-family: Arial, sans-serif;
+            font-family: '${_ff}', sans-serif;
             z-index: 1000;
-            border-radius: 4px;
-            font-weight: ${isBold ? 'bold' : 'normal'};
-            font-style: ${isItalic ? 'italic' : 'normal'};
-            text-decoration: ${isStrike ? 'line-through' : isUnderline ? 'underline' : 'none'};
+            border-radius: 2px;
+            font-weight: ${_bold ? 'bold' : 'normal'};
+            font-style: ${_italic ? 'italic' : 'normal'};
+            text-decoration: ${_strike ? 'line-through' : _under ? 'underline' : 'none'};
+            text-align: ${_align};
             white-space: pre-wrap;
             word-wrap: break-word;
             scrollbar-width: none;
             -ms-overflow-style: none;
+            box-sizing: border-box;
         `;
+
+        // Sticky note-specific overrides for textarea sizing
+        if (node.type === 'sticky') {
+            textarea.style.top = `${areaPosition.y + 14 * stageScale}px`;
+            textarea.style.left = `${areaPosition.x + 14 * stageScale}px`;
+            textarea.style.width = `${(node.width - 28) * stageScale}px`;
+            textarea.style.minWidth = '0px';
+            textarea.style.border = 'none';
+        }
         textarea.style.setProperty('-webkit-scrollbar', 'none');
 
+        // Watch for node style changes from FloatingTextToolbar and sync to textarea
+        let prevListType = node.listType || null;
+        const unsubStyleSync = useStore.subscribe((state) => {
+            const updatedNode = state.nodes.find(n => n.id === node.id);
+            if (!updatedNode || textareaRemoved) return;
+            const fs = updatedNode.fontStyle || 'normal';
+            textarea.style.fontWeight = fs.includes('bold') ? 'bold' : 'normal';
+            textarea.style.fontStyle = fs.includes('italic') ? 'italic' : 'normal';
+            textarea.style.textDecoration = updatedNode.textDecoration === 'underline' ? 'underline' : updatedNode.textDecoration === 'line-through' ? 'line-through' : 'none';
+            textarea.style.fontFamily = `'${updatedNode.fontFamily || 'Arial'}', sans-serif`;
+            textarea.style.fontSize = `${(updatedNode.fontSize || 24) * stageScale}px`;
+            const clr = updatedNode.type === 'sticky' ? (updatedNode.textColor || '#1a1a1a') : (updatedNode.fill || '#000000');
+            textarea.style.color = clr;
+            // Force-sync textarea content when list type changes
+            const curListType = updatedNode.listType || null;
+            if (curListType !== prevListType) {
+                prevListType = curListType;
+                textarea.value = updatedNode.text || '';
+                textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+            }
+            // Re-expand after any style change (font size/family affect width)
+            autoExpand();
+        });
+        let textareaRemoved = false;
+
         // Auto-expand width and height as user types
+        // Reads current styles from textarea.style so it picks up live changes from FloatingTextToolbar
         const autoExpand = () => {
-            // Measure width based on longest line
+            const currentFontSize = textarea.style.fontSize || `${_fs * stageScale}px`;
+            const currentFontFamily = textarea.style.fontFamily || `'${_ff}', sans-serif`;
+            const currentFontWeight = textarea.style.fontWeight || 'normal';
             const lines = textarea.value.split('\n');
             let maxWidth = 100;
             lines.forEach(line => {
                 const tempSpan = document.createElement('span');
-                tempSpan.style.cssText = `
-                    position: absolute;
-                    visibility: hidden;
-                    white-space: nowrap;
-                    font-size: ${node.fontSize * stageScale}px;
-                    font-family: Arial, sans-serif;
-                    font-weight: ${isBold ? 'bold' : 'normal'};
-                    padding: 0;
-                `;
+                tempSpan.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font-size:${currentFontSize};font-family:${currentFontFamily};font-weight:${currentFontWeight};padding:0;`;
                 tempSpan.textContent = line || textarea.placeholder;
                 document.body.appendChild(tempSpan);
                 maxWidth = Math.max(maxWidth, tempSpan.offsetWidth + 30);
                 tempSpan.remove();
             });
+
+            // Limit width for sticky notes to prevent overflowing the card
+            if (node.type === 'sticky') {
+                const stickyMaxW = (node.width - 24) * stageScale;
+                maxWidth = Math.min(maxWidth, stickyMaxW);
+            }
+
             textarea.style.width = `${maxWidth}px`;
 
             // Expand height using scrollHeight
@@ -1182,29 +921,49 @@ export default function Whiteboard() {
         textarea.select();
 
         const removeTextarea = (save = true) => {
+            if (textareaRemoved) return;
+            textareaRemoved = true;
+            unsubStyleSync(); // Stop watching for style changes
             if (save) {
-                updateNode(node.id, { text: textarea.value || 'Text' });
+                const finalText = textarea.value;
+                // If user manually removed all list prefixes, clear listType
+                const currentNode = useStore.getState().nodes.find(n => n.id === node.id);
+                const nodeListType = currentNode?.listType;
+                let updates = { text: finalText };
+                if (nodeListType) {
+                    const lines = finalText.split('\n').filter(l => l.trim());
+                    const hasPrefixes = lines.length > 0 && lines.every(l => /^(•\s|\d+\.\s)/.test(l));
+                    if (!hasPrefixes) {
+                        updates.listType = null;
+                    }
+                }
+                updateNode(node.id, updates);
             }
-            // If not saving, just close without updating
             textarea.remove();
-            toolbar.remove();
-            document.removeEventListener('mousedown', closeDropdownOnClickOutside);
-            setEditingTextId(null);
+            showEditingTextNode();
         };
 
         textarea.addEventListener('blur', (e) => {
-            // Don't remove if clicking on toolbar
-            if (e.relatedTarget && toolbar.contains(e.relatedTarget)) {
-                textarea.focus();
-                return;
+            // If focus moved to the floating toolbar, don't close
+            const related = e.relatedTarget;
+            if (related) {
+                const toolbar = related.closest('[data-floating-toolbar]');
+                if (toolbar) {
+                    setTimeout(() => { if (!textareaRemoved) textarea.focus(); }, 0);
+                    return;
+                }
             }
-            removeTextarea(true);
+            setTimeout(() => {
+                if (!textareaRemoved && !document.activeElement?.closest('[data-floating-toolbar]')) {
+                    removeTextarea(true);
+                }
+            }, 150);
         });
         textarea.addEventListener('keydown', (e) => {
             if ((e.key === 'Enter' && (e.ctrlKey || e.shiftKey))) { e.preventDefault(); removeTextarea(true); }
             if (e.key === 'Escape') { e.preventDefault(); removeTextarea(false); }
         });
-    }, [updateNode, stageScale]);
+    }, [updateNode, stageScale, hideEditingTextNode, showEditingTextNode]);
 
     const handleDragEnd = useCallback((e, id) => {
         // If this node is part of a multi-selection, update all selected nodes
@@ -1229,35 +988,57 @@ export default function Whiteboard() {
         const sx = n.scaleX(), sy = n.scaleY();
         n.scaleX(1); n.scaleY(1);
 
-        if (type === 'rectangle' || type === 'image' || type === 'youtube' || type === 'diamond' || type === 'audio' || type === 'video' || type === 'pdf') {
-            // For Group-based nodes (audio, video, youtube, pdf), n.width()/n.height()
-            // returns 0 because Groups don't have intrinsic dimensions.
-            // Use the original node data from the store to compute the new size.
+        if (['rectangle', 'roundedRect', 'image', 'youtube', 'diamond', 'audio', 'video', 'pdf', 'cloud', 'rhombus', 'heart'].includes(type)) {
             const nodeData = nodes.find(nd => nd.id === id);
-            const origW = nodeData ? (nodeData.width || 300) : (n.width() || 300);
-            const origH = nodeData ? (nodeData.height || 80) : (n.height() || 80);
+            const origW = nodeData ? (nodeData.width || nodeData.size || 300) : (n.width() || 300);
+            const origH = nodeData ? (nodeData.height || nodeData.size || 80) : (n.height() || 80);
             updateNode(id, { x: n.x(), y: n.y(), width: Math.max(20, origW * sx), height: Math.max(20, origH * sy) });
-        } else if (type === 'circle' || type === 'triangle' || type === 'hexagon') {
+        } else if (['circle', 'triangle', 'pentagon', 'hexagon', 'octagon'].includes(type)) {
             updateNode(id, { x: n.x(), y: n.y(), radius: Math.max(10, n.radius() * Math.max(sx, sy)) });
+        } else if (type === 'ellipse') {
+            updateNode(id, { x: n.x(), y: n.y(), radiusX: Math.max(10, n.radiusX() * sx), radiusY: Math.max(10, n.radiusY() * sy) });
         } else if (type === 'star') {
-            updateNode(id, { x: n.x(), y: n.y(), innerRadius: Math.max(5, n.innerRadius() * sx), outerRadius: Math.max(10, n.outerRadius() * sx) });
+            updateNode(id, { x: n.x(), y: n.y(), innerRadius: Math.max(5, n.innerRadius() * Math.max(sx, sy)), outerRadius: Math.max(10, n.outerRadius() * Math.max(sx, sy)) });
+        } else if (type === 'cross') {
+            const nodeData = nodes.find(nd => nd.id === id);
+            const origSize = nodeData?.size || 100;
+            updateNode(id, { x: n.x(), y: n.y(), size: Math.max(20, origSize * Math.max(sx, sy)) });
         } else if (type === 'text') {
             updateNode(id, { x: n.x(), y: n.y(), fontSize: Math.max(8, Math.round(n.fontSize() * sy)) });
+        } else if (type === 'sticky') {
+            const nodeData = nodes.find(nd => nd.id === id);
+            const origW = nodeData?.width || 150;
+            const origH = nodeData?.height || 150;
+            updateNode(id, { x: n.x(), y: n.y(), width: Math.max(60, origW * sx), height: Math.max(60, origH * sy) });
+        } else if (type === 'arrow' || type === 'simpleLine') {
+            const nodeData = nodes.find(nd => nd.id === id);
+            if (nodeData?.points) {
+                const scaledPoints = nodeData.points.map((val, i) => i % 2 === 0 ? val * sx : val * sy);
+                updateNode(id, { x: n.x(), y: n.y(), points: scaledPoints });
+            }
         }
     }, [updateNode, nodes]);
 
     const renderNode = (node) => {
         // When using drawing tools, make nodes non-interactive so clicks pass through
-        const isDrawingTool = tool === 'shape' || tool === 'text' || tool === 'pen' || tool === 'highlighter';
+        const isDrawingTool = tool === 'shape' || tool === 'text' || tool === 'pen' || tool === 'highlighter' || tool === 'laser' || tool === 'sticky' || tool === 'frame' || tool === 'comment';
 
         const props = {
-            key: node.id, id: node.id,
-            draggable: tool === 'select', // Objects draggable in select mode; Konva prioritizes inner element over stage
-            listening: !isDrawingTool, // Disable listening when drawing to allow clicks to pass through
+            id: node.id,
+            draggable: tool === 'select' && !node.locked,
+            listening: !isDrawingTool,
+            opacity: node.opacity ?? 1,
             onClick: (e) => handleClick(e, node.id),
             onTap: (e) => handleClick(e, node.id),
             onDblClick: (e) => handleDblClick(e, node),
             onDblTap: (e) => handleDblClick(e, node),
+            onContextMenu: (e) => {
+                e.evt?.preventDefault();
+                const stage = stageRef.current;
+                if (!stage) return;
+                const pointer = stage.getPointerPosition();
+                showContextMenu(pointer.x, pointer.y, node.id);
+            },
             onMouseDown: (e) => {
                 // Track button and prevent drag for non-left buttons
                 const button = e.evt ? e.evt.button : 0;
@@ -1274,6 +1055,8 @@ export default function Whiteboard() {
                         e.target.stopDrag();
                     }
                 } else if (tool === 'select') {
+                    // Don't select locked nodes
+                    if (node.locked) return;
                     // Select (highlight) immediately on mousedown so drag is seamless
                     e.cancelBubble = true; // Prevent stage mousedown from firing
                     const isMulti = e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey || false;
@@ -1331,7 +1114,7 @@ export default function Whiteboard() {
 
         switch (node.type) {
             case 'rectangle':
-                return <Rect {...props} x={node.x} y={node.y} width={node.width} height={node.height} fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} cornerRadius={4} />;
+                return <Rect {...props} x={node.x} y={node.y} width={node.width} height={node.height} fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} cornerRadius={node.cornerRadius || 4} />;
             case 'roundedRect':
                 return <Rect {...props} x={node.x} y={node.y} width={node.width} height={node.height} fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} cornerRadius={node.cornerRadius || 15} />;
             case 'circle':
@@ -1355,24 +1138,51 @@ export default function Whiteboard() {
                 return <RegularPolygon {...props} x={node.x} y={node.y} sides={6} radius={node.radius} fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} />;
             case 'octagon':
                 return <RegularPolygon {...props} x={node.x} y={node.y} sides={8} radius={node.radius} fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} />;
-            case 'heart':
+            case 'heart': {
+                // Convert size-based to width/height for proper Transformer bounds
+                const heartW = node.width || node.size || 100;
+                const heartH = node.height || node.size || 100;
                 return (
                     <Shape
                         {...props}
                         sceneFunc={(ctx, shape) => {
-                            const s = node.size / 2;
+                            const w = heartW;
+                            const h = heartH;
+                            // Draw heart within 0,0 to w,h bounding box
                             ctx.beginPath();
-                            ctx.moveTo(0, s * 0.4);
-                            ctx.bezierCurveTo(-s, -s * 0.3, -s, -s * 0.8, 0, -s * 0.4);
-                            ctx.bezierCurveTo(s, -s * 0.8, s, -s * 0.3, 0, s * 0.4);
+                            ctx.moveTo(w / 2, h * 0.2);
+                            ctx.bezierCurveTo(w / 2, 0, 0, 0, 0, h * 0.35);
+                            ctx.bezierCurveTo(0, h * 0.6, w / 2, h * 0.8, w / 2, h);
+                            ctx.bezierCurveTo(w / 2, h * 0.8, w, h * 0.6, w, h * 0.35);
+                            ctx.bezierCurveTo(w, 0, w / 2, 0, w / 2, h * 0.2);
                             ctx.closePath();
                             ctx.fillStrokeShape(shape);
                         }}
                         x={node.x}
                         y={node.y}
+                        width={heartW}
+                        height={heartH}
                         fill={node.fill}
                         stroke={node.stroke}
                         strokeWidth={node.strokeWidth}
+                    />
+                );
+            }
+            case 'rhombus':
+                return (
+                    <Rect
+                        {...props}
+                        x={node.x}
+                        y={node.y}
+                        width={node.width}
+                        height={node.height}
+                        fill={node.fill}
+                        stroke={node.stroke}
+                        strokeWidth={node.strokeWidth}
+                        cornerRadius={node.cornerRadius || 4}
+                        rotation={45}
+                        offsetX={node.width / 2}
+                        offsetY={node.height / 2}
                     />
                 );
             case 'cloud':
@@ -1380,19 +1190,22 @@ export default function Whiteboard() {
                     <Shape
                         {...props}
                         sceneFunc={(ctx, shape) => {
-                            const w = node.width / 2;
-                            const h = node.height / 2;
+                            const w = node.width;
+                            const h = node.height;
+                            // Draw cloud within 0,0 to w,h bounding box
                             ctx.beginPath();
-                            ctx.moveTo(-w * 0.3, h * 0.5);
-                            ctx.bezierCurveTo(-w * 0.8, h * 0.5, -w, 0, -w * 0.6, -h * 0.3);
-                            ctx.bezierCurveTo(-w * 0.8, -h * 0.8, -w * 0.2, -h, 0, -h * 0.6);
-                            ctx.bezierCurveTo(w * 0.3, -h, w * 0.8, -h * 0.6, w * 0.7, -h * 0.2);
-                            ctx.bezierCurveTo(w, 0, w * 0.9, h * 0.5, w * 0.4, h * 0.5);
+                            ctx.moveTo(w * 0.2, h * 0.75);
+                            ctx.bezierCurveTo(w * 0.0, h * 0.75, -w * 0.02, h * 0.5, w * 0.15, h * 0.35);
+                            ctx.bezierCurveTo(w * 0.05, h * 0.1, w * 0.25, 0, w * 0.45, h * 0.1);
+                            ctx.bezierCurveTo(w * 0.55, -h * 0.02, w * 0.75, h * 0.05, w * 0.8, h * 0.25);
+                            ctx.bezierCurveTo(w * 1.02, h * 0.3, w * 1.02, h * 0.7, w * 0.8, h * 0.75);
                             ctx.closePath();
                             ctx.fillStrokeShape(shape);
                         }}
-                        x={node.x + node.width / 2}
-                        y={node.y + node.height / 2}
+                        x={node.x}
+                        y={node.y}
+                        width={node.width}
+                        height={node.height}
                         fill={node.fill}
                         stroke={node.stroke}
                         strokeWidth={node.strokeWidth}
@@ -1413,8 +1226,38 @@ export default function Whiteboard() {
                         strokeWidth={node.strokeWidth}
                     />
                 );
-            case 'text':
-                return editingTextId === node.id ? null : (
+            case 'text': {
+                const textOpacity = node.opacity ?? 1;
+                const textListening = props.listening;
+                if (node.textHighlight) {
+                    return (
+                        <Group {...props} listening={textListening}>
+                            <Rect
+                                x={node.x - 2}
+                                y={node.y - 1}
+                                width={(node.text || 'Text').length * (node.fontSize || 24) * 0.6 + 8}
+                                height={(node.fontSize || 24) * 1.4 + 4}
+                                fill="#ffeb3b"
+                                cornerRadius={2}
+                                opacity={textOpacity}
+                                listening={false}
+                            />
+                            <Text
+                                x={node.x}
+                                y={node.y}
+                                text={node.text}
+                                fontSize={node.fontSize}
+                                fill={node.fill}
+                                fontFamily={node.fontFamily || 'Arial'}
+                                fontStyle={node.fontStyle || 'normal'}
+                                textDecoration={node.textDecoration || ''}
+                                align={node.align || 'left'}
+                                opacity={textOpacity}
+                            />
+                        </Group>
+                    );
+                }
+                return (
                     <Text
                         {...props}
                         x={node.x}
@@ -1422,11 +1265,15 @@ export default function Whiteboard() {
                         text={node.text}
                         fontSize={node.fontSize}
                         fill={node.fill}
-                        fontFamily="Arial"
+                        fontFamily={node.fontFamily || 'Arial'}
                         fontStyle={node.fontStyle || 'normal'}
+                        textDecoration={node.textDecoration || ''}
                         align={node.align || 'left'}
+                        opacity={textOpacity}
+                        listening={textListening}
                     />
                 );
+            }
             case 'line':
                 return <Line {...props} points={node.points} stroke={node.stroke} strokeWidth={node.strokeWidth} hitStrokeWidth={Math.max(20, node.strokeWidth * 2)} lineCap="round" lineJoin="round" tension={0.5} />;
             case 'highlight':
@@ -1441,6 +1288,96 @@ export default function Whiteboard() {
                 return <VideoNode key={node.id} node={node} commonProps={props} />;
             case 'pdf':
                 return <PdfDocumentNode key={node.id} node={node} commonProps={props} />;
+            case 'sticky': {
+                const stickyText = node.text || '';
+                const pad = 14;
+                const maxW = node.width - pad * 2;
+                const maxH = node.height - pad * 2;
+                // Start with base font size and scale down only if needed
+                let stickyFontSize = node.fontSize || 18;
+                if (stickyText.length > 0 && maxW > 0 && maxH > 0) {
+                    // Iterative fit: reduce font until text fits
+                    for (let fs = stickyFontSize; fs >= 12; fs--) {
+                        const avgCharW = fs * 0.58;
+                        const charsPerLine = Math.floor(maxW / avgCharW);
+                        if (charsPerLine < 1) continue;
+                        const words = stickyText.split(/\s+/);
+                        let lines = 1, lineLen = 0;
+                        for (const w of words) {
+                            if (lineLen + w.length > charsPerLine && lineLen > 0) { lines++; lineLen = w.length; }
+                            else { lineLen += (lineLen > 0 ? 1 : 0) + w.length; }
+                        }
+                        if (lines * fs * 1.3 <= maxH) { stickyFontSize = fs; break; }
+                        stickyFontSize = fs;
+                    }
+                }
+                return (
+                    <Group {...props} x={node.x} y={node.y}>
+                        <Rect
+                            width={node.width}
+                            height={node.height}
+                            fill={node.fill || '#fef08a'}
+                            cornerRadius={4}
+                            shadowColor="rgba(0,0,0,0.15)"
+                            shadowBlur={8}
+                            shadowOffset={{ x: 2, y: 2 }}
+                        />
+                        {/* Fold corner */}
+                        <Shape
+                            sceneFunc={(ctx, shape) => {
+                                const s = 16;
+                                ctx.beginPath();
+                                ctx.moveTo(node.width - s, 0);
+                                ctx.lineTo(node.width, 0);
+                                ctx.lineTo(node.width, s);
+                                ctx.closePath();
+                                ctx.fillStrokeShape(shape);
+                            }}
+                            fill="rgba(0,0,0,0.06)"
+                        />
+                        <Text
+                            text={stickyText || 'Double-click to edit'}
+                            width={maxW}
+                            height={maxH}
+                            x={pad}
+                            y={pad}
+                            fontSize={stickyFontSize}
+                            fill={stickyText ? (node.textColor || '#1a1a1a') : '#aaa'}
+                            fontFamily={node.fontFamily || 'Arial'}
+                            fontStyle={node.fontStyle || 'normal'}
+                            textDecoration={node.textDecoration || 'none'}
+                            wrap="word"
+                            align={node.align || 'left'}
+                            verticalAlign="top"
+                        />
+                        {node.locked && (
+                            <Text text="🔒" x={node.width - 22} y={4} fontSize={14} />
+                        )}
+                    </Group>
+                );
+            }
+            case 'frame':
+                return (
+                    <Group {...props} x={node.x} y={node.y}>
+                        <Rect
+                            width={node.width}
+                            height={node.height}
+                            stroke={node.stroke || '#6366f1'}
+                            strokeWidth={node.strokeWidth || 2}
+                            dash={[10, 5]}
+                            cornerRadius={8}
+                        />
+                        <Text
+                            text={node.label || 'Frame'}
+                            x={8}
+                            y={-20}
+                            fontSize={13}
+                            fill={node.stroke || '#6366f1'}
+                            fontFamily="Arial"
+                            fontStyle="bold"
+                        />
+                    </Group>
+                );
             default:
                 return null;
         }
@@ -1456,13 +1393,13 @@ export default function Whiteboard() {
         const centerX = x + width / 2;
         const centerY = y + height / 2;
         const size = Math.max(width, height);
-        const previewProps = { fill: fillColor, stroke: strokeColor, strokeWidth, opacity: 0.6 };
+        const previewProps = { fill: fillColor, stroke: strokeColor, strokeWidth: objectStrokeWidth, opacity: 0.6 };
 
         switch (type) {
             case 'rectangle':
-                return <Rect x={x} y={y} width={width} height={height} {...previewProps} cornerRadius={4} />;
+                return <Rect x={x} y={y} width={width} height={height} {...previewProps} cornerRadius={storeCornerRadius || 4} />;
             case 'roundedRect':
-                return <Rect x={x} y={y} width={width} height={height} {...previewProps} cornerRadius={15} />;
+                return <Rect x={x} y={y} width={width} height={height} {...previewProps} cornerRadius={storeCornerRadius || 15} />;
             case 'circle':
                 return <Circle x={centerX} y={centerY} radius={size / 2} {...previewProps} />;
             case 'ellipse':
@@ -1487,11 +1424,13 @@ export default function Whiteboard() {
                 return (
                     <Shape
                         sceneFunc={(ctx, shape) => {
-                            const s = size / 2;
+                            const s = size * 0.5;
                             ctx.beginPath();
-                            ctx.moveTo(0, s * 0.4);
-                            ctx.bezierCurveTo(-s, -s * 0.3, -s, -s * 0.8, 0, -s * 0.4);
-                            ctx.bezierCurveTo(s, -s * 0.8, s, -s * 0.3, 0, s * 0.4);
+                            ctx.moveTo(0, -s * 0.35);
+                            ctx.bezierCurveTo(0, -s * 0.65, -s * 0.55, -s * 0.85, -s * 0.55, -s * 0.35);
+                            ctx.bezierCurveTo(-s * 0.55, s * 0.05, 0, s * 0.35, 0, s * 0.65);
+                            ctx.bezierCurveTo(0, s * 0.35, s * 0.55, s * 0.05, s * 0.55, -s * 0.35);
+                            ctx.bezierCurveTo(s * 0.55, -s * 0.85, 0, -s * 0.65, 0, -s * 0.35);
                             ctx.closePath();
                             ctx.fillStrokeShape(shape);
                         }}
@@ -1500,6 +1439,8 @@ export default function Whiteboard() {
                         {...previewProps}
                     />
                 );
+            case 'rhombus':
+                return <Rect x={centerX} y={centerY} width={width} height={height} {...previewProps} cornerRadius={storeCornerRadius || 4} rotation={45} offsetX={width / 2} offsetY={height / 2} />;
             case 'cloud':
                 return (
                     <Shape
@@ -1531,16 +1472,28 @@ export default function Whiteboard() {
 
     const getCursor = () => {
         if (tool === 'eraser') {
-            // Custom eraser cursor - a small square
             return `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23666" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="4" y1="20" x2="20" y2="4"/></svg>') 12 12, auto`;
         }
-        if (tool === 'shape' || tool === 'pen' || tool === 'highlighter') return 'crosshair';
-        if (tool === 'text') return 'text';
+        if (tool === 'pen') {
+            const colorHex = encodeURIComponent(strokeColor);
+            const size = Math.max(4, Math.min(penStrokeWidth * 2, 24));
+            const r = size / 2;
+            return `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="${size + 2}" height="${size + 2}" viewBox="0 0 ${size + 2} ${size + 2}"><circle cx="${r + 1}" cy="${r + 1}" r="${r}" fill="${colorHex}" stroke="%23333" stroke-width="0.5"/></svg>') ${r + 1} ${r + 1}, crosshair`;
+        }
+        if (tool === 'highlighter') {
+            const colorHex = encodeURIComponent(highlighterColor);
+            const size = Math.max(8, Math.min(highlighterStrokeWidth, 30));
+            const r = size / 2;
+            return `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="${size + 2}" height="${size + 2}" viewBox="0 0 ${size + 2} ${size + 2}"><circle cx="${r + 1}" cy="${r + 1}" r="${r}" fill="${colorHex}" fill-opacity="0.5" stroke="%23333" stroke-width="0.5"/></svg>') ${r + 1} ${r + 1}, crosshair`;
+        }
+        if (tool === 'comment') return 'crosshair';
+        if (tool === 'shape' || tool === 'laser' || tool === 'frame') return 'crosshair';
+        if (tool === 'text' || tool === 'sticky') return 'text';
         return 'default';
     };
 
     return (
-        <div className="absolute inset-0 overflow-hidden" style={{ backgroundColor: '#f5f6f8', cursor: getCursor() }}>
+        <div className="absolute inset-0 overflow-hidden" style={{ backgroundColor: theme === 'dark' ? '#1a1a1a' : '#f5f6f8', cursor: getCursor() }}>
             <Stage
                 ref={stageRef}
                 width={stageSize.width}
@@ -1560,7 +1513,10 @@ export default function Whiteboard() {
                 onTouchEnd={handleMouseUp}
             >
                 <Layer ref={layerRef}>
-                    {nodes.map(renderNode)}
+                    {nodes.map(node => {
+                        const el = renderNode(node);
+                        return el ? cloneElement(el, { key: node.id }) : null;
+                    })}
                     {renderDrawingPreview()}
                     {/* Rubber-band selection rectangle */}
                     {selectionRect && (
@@ -1588,10 +1544,131 @@ export default function Whiteboard() {
                         borderStrokeWidth={1.5}
                     />
                 </Layer>
+                {/* Laser pointer layer — ephemeral, never saved */}
+                {laserLines.length > 0 && (
+                    <Layer listening={false}>
+                        {laserLines.map(line => (
+                            <Line
+                                key={line.id}
+                                points={line.points}
+                                stroke="#ff3333"
+                                strokeWidth={3}
+                                opacity={line.opacity}
+                                shadowColor="#ff3333"
+                                shadowBlur={15}
+                                shadowOpacity={0.8}
+                                lineCap="round"
+                                lineJoin="round"
+                                tension={0.5}
+                            />
+                        ))}
+                    </Layer>
+                )}
             </Stage>
             {/* PDF overlay toolbars — HTML positioned over the canvas */}
             <PdfOverlays />
+            {/* Audio overlays — inline playback positioned over the canvas */}
+            <AudioOverlays />
+            {/* Video overlays — inline playback positioned over the canvas */}
+            <VideoOverlays />
+            {/* YouTube overlays — inline playback positioned over the canvas */}
+            <YoutubeOverlays />
+            {/* Floating shape toolbar */}
+            {selectedNodeIds.length === 1 && (() => {
+                const selNode = nodes.find(n => n.id === selectedNodeIds[0]);
+                if (!selNode) return null;
+                const shapeTypes = ['rectangle', 'roundedRect', 'circle', 'ellipse', 'triangle', 'diamond', 'pentagon', 'hexagon', 'octagon', 'star', 'heart', 'cloud', 'cross', 'rhombus'];
+                if (!shapeTypes.includes(selNode.type)) return null;
+                const konvaNode = layerRef.current?.findOne(`#${selNode.id}`);
+                if (!konvaNode || !stageRef.current) return null;
+                const box = konvaNode.getClientRect({ relativeTo: stageRef.current });
+                const absX = box.x * stageScale + stagePosition.x + box.width * stageScale / 2;
+                const absY = box.y * stageScale + stagePosition.y;
+                return <ShapeToolbar nodeId={selNode.id} position={{ x: absX, y: absY }} />;
+            })()}
+
+            {/* Floating text toolbar — when a text node is selected */}
+            {selectedNodeIds.length === 1 && (() => {
+                const selNode = nodes.find(n => n.id === selectedNodeIds[0]);
+                if (!selNode || (selNode.type !== 'text' && selNode.type !== 'sticky')) return null;
+                const konvaNode = layerRef.current?.findOne(`#${selNode.id}`);
+                if (!konvaNode || !stageRef.current) return null;
+                const box = konvaNode.getClientRect({ relativeTo: stageRef.current });
+                const absX = box.x * stageScale + stagePosition.x + box.width * stageScale / 2;
+                const absY = box.y * stageScale + stagePosition.y;
+                return <FloatingTextToolbar nodeId={selNode.id} position={{ x: absX, y: absY }} />;
+            })()}
+
+            {/* Inline comment input card */}
+            {pendingComment && (() => {
+                const screenX = pendingComment.x * stageScale + stagePosition.x;
+                const screenY = pendingComment.y * stageScale + stagePosition.y;
+                return (
+                    <div
+                        className="fixed z-[150] bg-white rounded-xl shadow-2xl border border-gray-200 p-3 w-64"
+                        style={{ left: screenX + 12, top: screenY - 12 }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center gap-2 mb-2">
+                            <div className="w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center">
+                                <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+                            </div>
+                            <span className="text-xs font-semibold text-gray-700">Add Comment</span>
+                        </div>
+                        <textarea
+                            autoFocus
+                            placeholder="Type your comment..."
+                            className="w-full text-sm text-black border border-gray-200 rounded-lg px-2 py-1.5 resize-none focus:outline-none focus:ring-2 focus:ring-purple-500 h-16"
+                            onKeyDown={(e) => {
+                                e.stopPropagation();
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    const text = e.target.value.trim();
+                                    if (text) { addComment(pendingComment.x, pendingComment.y, text); }
+                                    setPendingComment(null);
+                                }
+                                if (e.key === 'Escape') { setPendingComment(null); }
+                            }}
+                        />
+                        <div className="flex justify-end gap-1 mt-1.5">
+                            <button
+                                onClick={() => setPendingComment(null)}
+                                className="px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded-lg"
+                            >Cancel</button>
+                            <button
+                                onClick={(e) => {
+                                    const textarea = e.target.closest('.fixed')?.querySelector('textarea');
+                                    const text = textarea?.value?.trim();
+                                    if (text) { addComment(pendingComment.x, pendingComment.y, text); }
+                                    setPendingComment(null);
+                                }}
+                                className="px-3 py-1 text-xs bg-purple-500 text-white rounded-lg hover:bg-purple-600"
+                            >Post</button>
+                        </div>
+                    </div>
+                );
+            })()}
         </div>
+    );
+}
+
+/**
+ * Renders a bottom-center AudioPlayer bar for the first playing audio node.
+ * Uses the rich AudioPlayer component so users get full controls.
+ */
+function AudioOverlays() {
+    const { nodes, updateNode } = useStore();
+    // Show the first playing audio in the bottom bar
+    const playingAudio = nodes.find(n => n.type === 'audio' && n.playing);
+
+    if (!playingAudio) return null;
+
+    return (
+        <AudioPlayer
+            src={playingAudio.src}
+            fileName={playingAudio.fileName}
+            onClose={() => updateNode(playingAudio.id, { playing: false })}
+        />
     );
 }
 
@@ -1616,6 +1693,175 @@ function PdfOverlays() {
                     isSelected={selectedNodeIds.includes(node.id)}
                 />
             ))}
+        </>
+    );
+}
+
+/**
+ * Wrapper that renders inline video players for video nodes with playing=true.
+ * Positioned as HTML overlays on top of the Konva Stage.
+ */
+function VideoOverlayPlayer({ node, stageScale, stagePosition, updateNode }) {
+    const [videoSrc, setVideoSrc] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
+    const videoRef = useRef(null);
+
+    const w = (node.width || 400) * stageScale;
+    const h = (node.height || 225) * stageScale;
+    const x = node.x * stageScale + stagePosition.x;
+    const y = node.y * stageScale + stagePosition.y;
+
+    // Load video src upfront — handles both direct URLs and IDB-stored blobs
+    useEffect(() => {
+        let cancelled = false;
+        const loadSrc = async () => {
+            setLoading(true);
+            setLoadError(false);
+
+            // If src is a valid non-empty URL/dataURL (not an IDB placeholder and not empty), use it directly
+            if (node.src && node.src.length > 10 && !node.src.startsWith('__idb__')) {
+                if (!cancelled) { setVideoSrc(node.src); setLoading(false); }
+                return;
+            }
+
+            // Otherwise load from IndexedDB
+            try {
+                const { loadMediaFromDB } = await import('../../store/useStore');
+                // Try multiple key patterns to find the video data
+                const key = node.src && node.src.startsWith('__idb__')
+                    ? node.src.replace('__idb__', '')
+                    : node.id;
+                const dbSrc = await loadMediaFromDB(key)
+                    || await loadMediaFromDB(node.id)
+                    || await loadMediaFromDB(`${node.id}_video`);
+                if (!cancelled) {
+                    if (dbSrc) {
+                        setVideoSrc(dbSrc);
+                    } else {
+                        // Last resort: if the original src is a data URL that wasn't stored, try it anyway
+                        if (node.src && node.src.startsWith('data:')) {
+                            setVideoSrc(node.src);
+                        } else {
+                            setLoadError(true);
+                        }
+                    }
+                    setLoading(false);
+                }
+            } catch (e) {
+                console.error('Video load error:', e);
+                if (!cancelled) { setLoadError(true); setLoading(false); }
+            }
+        };
+        loadSrc();
+        return () => { cancelled = true; };
+    }, [node.id, node.src]);
+
+    return (
+        <div
+            className="absolute z-[100] overflow-hidden rounded-xl shadow-2xl"
+            style={{ left: x, top: y, width: w, height: h }}
+            onMouseDown={(e) => e.stopPropagation()}
+        >
+            {loading ? (
+                <div className="w-full h-full bg-gray-900 flex flex-col items-center justify-center text-white gap-2">
+                    <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span className="text-xs text-gray-400">Loading video...</span>
+                </div>
+            ) : loadError ? (
+                <div className="w-full h-full bg-gray-900 flex flex-col items-center justify-center text-white gap-2">
+                    <span className="text-2xl">⚠️</span>
+                    <span className="text-sm text-gray-400">Video failed to load</span>
+                </div>
+            ) : (
+                <video
+                    ref={videoRef}
+                    src={videoSrc}
+                    autoPlay
+                    controls
+                    playsInline
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
+                />
+            )}
+            <button
+                onClick={() => updateNode(node.id, { playing: false })}
+                className="absolute top-1 right-1 w-6 h-6 bg-black/60 hover:bg-black/80 text-white rounded-full flex items-center justify-center text-xs z-[101] transition-colors"
+                title="Stop video"
+            >
+                ✕
+            </button>
+        </div>
+    );
+}
+
+function VideoOverlays() {
+    const { nodes, updateNode, stagePosition, stageScale } = useStore();
+    const playingVideos = nodes.filter(n => n.type === 'video' && n.playing);
+
+    if (playingVideos.length === 0) return null;
+
+    return (
+        <>
+            {playingVideos.map(node => (
+                <VideoOverlayPlayer
+                    key={node.id}
+                    node={node}
+                    stageScale={stageScale}
+                    stagePosition={stagePosition}
+                    updateNode={updateNode}
+                />
+            ))}
+        </>
+    );
+}
+
+/**
+ * Renders inline YouTube iframe players for youtube nodes with playing=true.
+ * Positioned as HTML overlays on top of the Konva Stage.
+ */
+function YoutubeOverlays() {
+    const { nodes, updateNode, stagePosition, stageScale } = useStore();
+    const playingYoutubes = nodes.filter(n => n.type === 'youtube' && n.playing);
+
+    if (playingYoutubes.length === 0) return null;
+
+    return (
+        <>
+            {playingYoutubes.map(node => {
+                const w = (node.width || 480) * stageScale;
+                const h = (node.height || 270) * stageScale;
+                const x = node.x * stageScale + stagePosition.x;
+                const y = node.y * stageScale + stagePosition.y;
+
+                return (
+                    <div
+                        key={node.id}
+                        className="absolute z-[100] overflow-hidden rounded-xl shadow-2xl"
+                        style={{
+                            left: x,
+                            top: y,
+                            width: w,
+                            height: h,
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                    >
+                        <iframe
+                            src={`https://www.youtube.com/embed/${node.videoId}?autoplay=1&rel=0`}
+                            title="YouTube video"
+                            style={{ width: '100%', height: '100%', border: 'none' }}
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                        />
+                        <button
+                            onClick={() => updateNode(node.id, { playing: false })}
+                            className="absolute top-1 right-1 w-6 h-6 bg-black/60 hover:bg-black/80 text-white rounded-full flex items-center justify-center text-xs z-[101] transition-colors"
+                            title="Stop video"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                );
+            })}
         </>
     );
 }

@@ -42,6 +42,7 @@
     --toolbar-border: 217 33% 22%;
 
     --radius: 0.5rem;
+    --panel-radius: 12px;
   }
 
   .light {
@@ -113,4 +114,34 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+}
+
+/* Magic Navigation Menu Styles */
+.magic-nav {
+  --indicator-color: #4a90d9;
+  --nav-bg: #ffffff;
+}
+
+.magic-nav-section {
+  position: relative;
+}
+
+/* Indicator is a clean circle — no decorative pseudo-elements */
+
+.magic-nav-item {
+  transition: all 0.3s ease;
+}
+
+.magic-nav-item:hover .magic-nav-label {
+  opacity: 1 !important;
+  transform: translateX(4px);
+}
+
+.magic-nav-label {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* Hide scrollbar for magic-nav */
+.magic-nav::-webkit-scrollbar {
+  display: none;
 }

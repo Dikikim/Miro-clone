@@ -4,8 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 const LOCAL_STORAGE_KEY_PREFIX = 'kot_state_board_';
 const BOARD_NAMES_KEY = 'kot_board_names';
 const CURRENT_BOARD_KEY = 'kot_current_board';
-const MAX_BOARDS = 6;
-const DEFAULT_BOARD_NAMES = ['Board 1', 'Board 2', 'Board 3', 'Board 4', 'Board 5', 'Board 6'];
+const MAX_BOARDS = 100;
+const DEFAULT_BOARD_NAMES = Array.from({ length: 6 }, (_, i) => `Board ${i + 1}`);
 
 const getBoardStorageKey = (boardId) => `${LOCAL_STORAGE_KEY_PREFIX}${boardId}`;
 const MAX_HISTORY = 50;
@@ -84,6 +84,7 @@ const saveToLocalStorageSync = (state, boardId) => {
         });
         const data = {
             nodes: nodesForStorage,
+            comments: state.comments || [],
             stagePosition: state.stagePosition,
             stageScale: state.stageScale,
         };
@@ -112,6 +113,7 @@ const saveToLocalStorage = async (state, boardId) => {
 
         const data = {
             nodes: nodesForStorage,
+            comments: state.comments || [],
             stagePosition: state.stagePosition,
             stageScale: state.stageScale,
         };
@@ -171,7 +173,8 @@ const loadCurrentBoardId = () => {
         const raw = localStorage.getItem(CURRENT_BOARD_KEY);
         if (raw !== null) {
             const id = parseInt(raw, 10);
-            if (id >= 0 && id < MAX_BOARDS) return id;
+            const names = loadBoardNames();
+            if (id >= 0 && id < names.length) return id;
         }
     } catch (e) { /* ignore */ }
     return 0;
@@ -201,9 +204,31 @@ const useStore = create((set, get) => ({
     // Tool colors
     fillColor: '#3b82f6',
     strokeColor: '#1e40af',
-    strokeWidth: 2,
+    penStrokeWidth: 2,
+    highlighterStrokeWidth: 20,
+    objectStrokeWidth: 2,
     textColor: '#000000',
+    textFontFamily: 'Arial',
+    textFontSize: 24,
     highlighterColor: '#ffeb3b',
+
+    // Shape corner radius
+    cornerRadius: 4,
+
+    // Clipboard
+    clipboard: [],
+
+    // Comments
+    comments: [],
+
+    // Sticky settings
+    stickyColor: '#fef08a',
+    stickyPileMode: false, // true = place 3 stickers as pile
+    setStickyColor: (color) => set({ stickyColor: color }),
+    setStickyPileMode: (mode) => set({ stickyPileMode: mode }),
+
+    // Board search
+    boardSearch: '',
 
     // Undo/Redo history
     history: [],
@@ -260,9 +285,15 @@ const useStore = create((set, get) => ({
 
     setFillColor: (color) => set({ fillColor: color }),
     setStrokeColor: (color) => set({ strokeColor: color }),
-    setStrokeWidth: (width) => set({ strokeWidth: width }),
+    setPenStrokeWidth: (width) => set({ penStrokeWidth: width }),
+    setHighlighterStrokeWidth: (width) => set({ highlighterStrokeWidth: width }),
+    setObjectStrokeWidth: (width) => set({ objectStrokeWidth: width }),
     setTextColor: (color) => set({ textColor: color }),
+    setTextFontFamily: (family) => set({ textFontFamily: family }),
+    setTextFontSize: (size) => set({ textFontSize: size }),
     setHighlighterColor: (color) => set({ highlighterColor: color }),
+    setCornerRadius: (radius) => set({ cornerRadius: radius }),
+    setBoardSearch: (search) => set({ boardSearch: search }),
 
     addNode: (nodeData) => {
         get().pushToHistory();
@@ -358,6 +389,7 @@ const useStore = create((set, get) => ({
             const nodes = localData.nodes || [];
             set({
                 nodes,
+                comments: localData.comments || [],
                 boardNames,
                 stagePosition: localData.stagePosition || { x: 0, y: 0 },
                 stageScale: localData.stageScale || 1,
@@ -401,6 +433,169 @@ const useStore = create((set, get) => ({
         names[boardId] = name;
         set({ boardNames: names });
         saveBoardNames(names);
+    },
+
+    addBoard: (name) => {
+        const names = [...get().boardNames];
+        if (names.length >= MAX_BOARDS) return null;
+        const newName = name || `Board ${names.length + 1}`;
+        names.push(newName);
+        set({ boardNames: names });
+        saveBoardNames(names);
+        return names.length - 1;
+    },
+
+    deleteBoard: async (boardId) => {
+        const { boardNames, currentBoardId } = get();
+        if (boardNames.length <= 1) return; // Keep at least 1 board
+        const names = boardNames.filter((_, i) => i !== boardId);
+        // Remove stored data for this board
+        try { localStorage.removeItem(getBoardStorageKey(boardId)); } catch (e) { /* ignore */ }
+        const newCurrentId = currentBoardId >= names.length ? names.length - 1 : (currentBoardId > boardId ? currentBoardId - 1 : currentBoardId);
+        set({ boardNames: names });
+        saveBoardNames(names);
+        if (newCurrentId !== currentBoardId || boardId === currentBoardId) {
+            await get().switchBoard(Math.min(newCurrentId, names.length - 1));
+        }
+    },
+
+    // --- Clipboard ---
+    copySelectedNodes: () => {
+        const { nodes, selectedNodeIds } = get();
+        const toCopy = nodes.filter(n => selectedNodeIds.includes(n.id));
+        if (toCopy.length === 0) return;
+        const cloned = toCopy.map(n => {
+            const clone = { ...n };
+            if (clone.points) clone.points = [...clone.points];
+            return clone;
+        });
+        set({ clipboard: cloned });
+    },
+
+    pasteNodes: (offsetX = 30, offsetY = 30) => {
+        const { clipboard } = get();
+        if (clipboard.length === 0) return;
+        get().pushToHistory();
+        const newIds = [];
+        clipboard.forEach(n => {
+            const newNode = { ...n, id: uuidv4(), x: (n.x || 0) + offsetX, y: (n.y || 0) + offsetY };
+            if (newNode.points) {
+                newNode.points = newNode.points.map((p, i) => p + (i % 2 === 0 ? offsetX : offsetY));
+            }
+            set(state => ({ nodes: [...state.nodes, newNode] }));
+            newIds.push(newNode.id);
+        });
+        set({ selectedNodeIds: newIds, hasUnsavedChanges: true });
+        saveToLocalStorageSync(get());
+        debounceSave(() => get().syncSave());
+    },
+
+    cutSelectedNodes: () => {
+        get().copySelectedNodes();
+        get().deleteSelectedNodes();
+    },
+
+    // --- Comments ---
+    addComment: (x, y, text, parentNodeId = null) => {
+        const comment = {
+            id: uuidv4(),
+            x, y,
+            parentNodeId,
+            text,
+            replies: [],
+            resolved: false,
+            createdAt: new Date().toISOString(),
+        };
+        set(state => ({ comments: [...state.comments, comment], hasUnsavedChanges: true }));
+        saveToLocalStorageSync(get());
+        debounceSave(() => get().syncSave());
+        return comment.id;
+    },
+
+    addReply: (commentId, text) => {
+        const reply = { id: uuidv4(), text, createdAt: new Date().toISOString() };
+        set(state => ({
+            comments: state.comments.map(c =>
+                c.id === commentId ? { ...c, replies: [...c.replies, reply] } : c
+            ),
+            hasUnsavedChanges: true,
+        }));
+        saveToLocalStorageSync(get());
+    },
+
+    resolveComment: (commentId) => {
+        set(state => ({
+            comments: state.comments.map(c =>
+                c.id === commentId ? { ...c, resolved: !c.resolved } : c
+            ),
+            hasUnsavedChanges: true,
+        }));
+        saveToLocalStorageSync(get());
+    },
+
+    deleteComment: (commentId) => {
+        set(state => ({
+            comments: state.comments.filter(c => c.id !== commentId),
+            hasUnsavedChanges: true,
+        }));
+        saveToLocalStorageSync(get());
+    },
+
+    // --- Context Menu ---
+    contextMenu: null,
+    showContextMenu: (x, y, nodeId) => set({ contextMenu: { x, y, nodeId } }),
+    hideContextMenu: () => set({ contextMenu: null }),
+
+    // --- Z-Order ---
+    bringToFront: (nodeId) => {
+        get().pushToHistory();
+        set((state) => {
+            const idx = state.nodes.findIndex(n => n.id === nodeId);
+            if (idx === -1) return state;
+            const node = state.nodes[idx];
+            const rest = state.nodes.filter((_, i) => i !== idx);
+            return { nodes: [...rest, node], hasUnsavedChanges: true };
+        });
+        saveToLocalStorageSync(get());
+    },
+    sendToBack: (nodeId) => {
+        get().pushToHistory();
+        set((state) => {
+            const idx = state.nodes.findIndex(n => n.id === nodeId);
+            if (idx === -1) return state;
+            const node = state.nodes[idx];
+            const rest = state.nodes.filter((_, i) => i !== idx);
+            return { nodes: [node, ...rest], hasUnsavedChanges: true };
+        });
+        saveToLocalStorageSync(get());
+    },
+    duplicateNode: (nodeId) => {
+        get().pushToHistory();
+        const node = get().nodes.find(n => n.id === nodeId);
+        if (!node) return;
+        const newNode = { ...node, id: uuidv4(), x: (node.x || 0) + 30, y: (node.y || 0) + 30 };
+        if (newNode.points && Array.isArray(newNode.points)) {
+            newNode.points = [...newNode.points];
+        }
+        set((state) => ({ nodes: [...state.nodes, newNode], hasUnsavedChanges: true }));
+        saveToLocalStorageSync(get());
+    },
+
+    // --- Lock ---
+    toggleLock: (nodeId) => {
+        set((state) => ({
+            nodes: state.nodes.map(n => n.id === nodeId ? { ...n, locked: !n.locked } : n),
+            hasUnsavedChanges: true,
+        }));
+        saveToLocalStorageSync(get());
+    },
+
+    // --- Theme ---
+    theme: (() => { try { return localStorage.getItem('kot_theme') || 'light'; } catch { return 'light'; } })(),
+    toggleTheme: () => {
+        const newTheme = get().theme === 'light' ? 'dark' : 'light';
+        set({ theme: newTheme });
+        try { localStorage.setItem('kot_theme', newTheme); } catch { }
     },
 }));
 
