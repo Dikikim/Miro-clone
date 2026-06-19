@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import useStore from '../../store/useStore';
 import ColorPalette from './ColorPalette';
+import { toggleList } from '../../utils/textListHelpers';
+import { nodeBaseAttrs, applyToRange, rangeEvery, setBold, setItalic } from '../../utils/richText';
 
 const FONT_LIST = [
     'Arial', 'Inter', 'Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Poppins',
@@ -16,37 +18,90 @@ const FONT_LIST = [
 
 const FONT_SIZES = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64, 72, 96, 128];
 
-// Helper: add list prefixes to raw text
-function addListPrefixes(text, listType) {
-    if (!listType || !text) return text;
-    const lines = text.split('\n');
-    return lines.map((line, i) => {
-        const stripped = line.replace(/^(•\s|\d+\.\s)/, '');
-        if (listType === 'bullet') return `• ${stripped}`;
-        if (listType === 'number') return `${i + 1}. ${stripped}`;
-        return stripped;
-    }).join('\n');
-}
-
-// Helper: strip list prefixes from text
-function stripListPrefixes(text) {
-    if (!text) return text;
-    return text.split('\n').map(line =>
-        line.replace(/^(•\s|\d+\.\s)/, '')
-    ).join('\n');
-}
+// Sticky-note specific menus
+const STICKY_SIZES = [['S', 200], ['M', 320], ['L', 440]];
+const STICKY_BG_COLORS = [
+    '#fef08a', '#fde047', '#fdba74', '#fca5a5',
+    '#f9a8d4', '#d8b4fe', '#a5b4fc', '#93c5fd',
+    '#67e8f9', '#6ee7b7', '#bef264', '#e5e7eb',
+];
+const EMOJIS = [
+    '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩',
+    '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨',
+    '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢',
+    '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓', '🧐', '😕', '🙁', '😮', '😲',
+    '🥺', '😦', '😨', '😰', '😢', '😭', '😱', '😖', '😞', '😓', '😩', '😫', '🥱', '😤', '😡', '😠',
+    '🤬', '😈', '👿', '💀', '💩', '🤡', '👻', '👽', '🤖', '🎃',
+    '👍', '👎', '👊', '✊', '🤛', '🤜', '👏', '🙌', '👐', '🙏', '✌️', '🤞', '🤟', '🤘', '👌', '🤏',
+    '👈', '👉', '👆', '👇', '☝️', '✋', '🖐️', '🖖', '👋', '💪', '✍️', '🤳',
+    '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', '❣️', '💕', '💖', '💘', '💯', '✅',
+    '❌', '❗', '❓', '⚠️', '🚫', '💢', '💬', '💭', '🔥', '⭐', '🌟', '✨', '⚡', '💥', '🎉', '🎊',
+    '🏆', '🥇', '🎯', '📌', '📍', '📎', '📝', '✏️', '📒', '📅', '🕒', '⏰', '💡', '🔑', '🔒', '📞',
+    '💻', '📱', '📷', '🔔', '💰', '💳', '🛒', '🌈', '☀️', '🌙', '☁️', '❄️', '🌊', '🌳', '🌸', '🍀',
+    '🍎', '🍌', '🍓', '🍕', '🍔', '🍩', '🎂', '☕', '🍺', '🚗', '✈️', '🚀', '⚽', '🏀', '🎮', '🎵',
+];
 
 export default function FloatingTextToolbar({ nodeId, position }) {
-    const { nodes, updateNode, setTextFontSize, setTextFontFamily } = useStore();
+    const { nodes, updateNode, setTextFontSize, setTextFontFamily, theme } = useStore();
+    const isDark = theme === 'dark';
 
     const [showFontFamilies, setShowFontFamilies] = useState(false);
     const [showFontSizes, setShowFontSizes] = useState(false);
     const [showColorPicker, setShowColorPicker] = useState(false);
     const [showMoreOptions, setShowMoreOptions] = useState(false);
+    const [showStickyColor, setShowStickyColor] = useState(false);
+    const [showEmoji, setShowEmoji] = useState(false);
     const [fontSizeInput, setFontSizeInput] = useState('');
     const [fontSizeInputFocused, setFontSizeInputFocused] = useState(false);
 
     const toolbarRef = useRef(null);
+    // Live position. While editing, the canvas text node is stale (its text is
+    // only committed on blur), so its measured width is wrong and centering on
+    // it pulls the toolbar to the left of what you're typing. Track the live
+    // editing textarea instead, and keep the toolbar inside the viewport.
+    const [livePos, setLivePos] = useState(position);
+
+    // Close dropdowns on outside click.
+    // Must stay above the early return — hooks can't run conditionally.
+    useEffect(() => {
+        const handleOutside = (e) => {
+            if (toolbarRef.current && !toolbarRef.current.contains(e.target)) {
+                setShowFontFamilies(false);
+                setShowFontSizes(false);
+                setShowColorPicker(false);
+                setShowMoreOptions(false);
+                setShowStickyColor(false);
+                setShowEmoji(false);
+            }
+        };
+        document.addEventListener('mousedown', handleOutside);
+        return () => document.removeEventListener('mousedown', handleOutside);
+    }, []);
+
+    useEffect(() => {
+        // Event-driven so it survives a backgrounded tab (rAF is throttled when
+        // hidden). When an editor textarea exists, centre over it and re-measure
+        // as it grows (input) or the editor appears/disappears (MutationObserver).
+        const measure = () => {
+            const editor = document.querySelector('textarea[data-text-editor="true"]');
+            const half = (toolbarRef.current?.offsetWidth || 360) / 2;
+            const clamp = (x) => Math.max(half + 8, Math.min(window.innerWidth - half - 8, x));
+            const target = editor ? (() => { const r = editor.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top }; })() : position;
+            const nx = clamp(target.x), ny = target.y;
+            setLivePos((p) => (Math.abs(p.x - nx) > 0.5 || Math.abs(p.y - ny) > 0.5) ? { x: nx, y: ny } : p);
+        };
+        measure();
+        document.addEventListener('input', measure);
+        window.addEventListener('resize', measure);
+        // The editing textarea is appended directly to <body>; watch for it.
+        const observer = new MutationObserver(measure);
+        observer.observe(document.body, { childList: true });
+        return () => {
+            document.removeEventListener('input', measure);
+            window.removeEventListener('resize', measure);
+            observer.disconnect();
+        };
+    }, [position]);
 
     const node = nodes.find(n => n.id === nodeId);
     if (!node || (node.type !== 'text' && node.type !== 'sticky')) return null;
@@ -60,83 +115,112 @@ export default function FloatingTextToolbar({ nodeId, position }) {
     const isUnderline = node.textDecoration === 'underline';
     const isStrike = node.textDecoration === 'line-through';
     const currentColor = isSticky ? (node.textColor || '#1a1a1a') : (node.fill || '#000000');
-    const listType = node.listType || null;
 
-    const closeAll = () => {
-        setShowFontFamilies(false);
-        setShowFontSizes(false);
-        setShowColorPicker(false);
-        setShowMoreOptions(false);
+    // Apply a per-character style transform to the selected range — or the whole
+    // text when nothing is selected — for text AND sticky notes. Collapses back
+    // to a node-level style (clearing segments) when the result is uniform, so
+    // plain text stays cheap to render.
+    const styleSelection = (makeTransform) => {
+        const ta = document.querySelector('textarea[data-text-editor="true"]');
+        const text = ta ? ta.value : (node.text || '');
+        const base = nodeBaseAttrs(node);
+        const hasSel = ta && ta.selectionStart !== ta.selectionEnd && text.length > 0;
+        const start = hasSel ? ta.selectionStart : 0;
+        const end = hasSel ? ta.selectionEnd : text.length;
+        const transform = makeTransform({ text, start, end, base });
+        const { segments, uniform, attr } = applyToRange(text, node.colorSegments, base, start, end, transform);
+        const update = { text };
+        const writeBase = () => {
+            update.fontSize = attr.fontSize;
+            update.fontFamily = attr.fontFamily;
+            update.fontStyle = attr.fontStyle;
+            update.textDecoration = attr.textDecoration;
+            if (isSticky) update.textColor = attr.fill; else update.fill = attr.fill;
+        };
+        if (uniform) {
+            writeBase();
+            update.colorSegments = null;
+        } else {
+            update.colorSegments = segments;
+            if (!hasSel) writeBase(); // whole-text change: keep node base in sync for new typing
+        }
+        updateNode(nodeId, update);
     };
 
-    const toggleBold = () => {
-        const newStyle = isBold
-            ? (isItalic ? 'italic' : 'normal')
-            : (isItalic ? 'bold italic' : 'bold');
-        updateNode(nodeId, { fontStyle: newStyle });
-    };
+    const toggleBold = () => styleSelection(({ text, start, end, base }) => {
+        const on = !rangeEvery(text, node.colorSegments, base, start, end, a => a.fontStyle.includes('bold'));
+        return a => ({ ...a, fontStyle: setBold(a.fontStyle, on) });
+    });
+    const toggleItalic = () => styleSelection(({ text, start, end, base }) => {
+        const on = !rangeEvery(text, node.colorSegments, base, start, end, a => a.fontStyle.includes('italic'));
+        return a => ({ ...a, fontStyle: setItalic(a.fontStyle, on) });
+    });
+    const toggleUnderline = () => styleSelection(({ text, start, end, base }) => {
+        const on = !rangeEvery(text, node.colorSegments, base, start, end, a => a.textDecoration === 'underline');
+        return a => ({ ...a, textDecoration: on ? 'underline' : '' });
+    });
+    const toggleStrike = () => styleSelection(({ text, start, end, base }) => {
+        const on = !rangeEvery(text, node.colorSegments, base, start, end, a => a.textDecoration === 'line-through');
+        return a => ({ ...a, textDecoration: on ? 'line-through' : '' });
+    });
 
-    const toggleItalic = () => {
-        const newStyle = isItalic
-            ? (isBold ? 'bold' : 'normal')
-            : (isBold ? 'bold italic' : 'italic');
-        updateNode(nodeId, { fontStyle: newStyle });
-    };
-
-    const toggleUnderline = () => {
-        updateNode(nodeId, { textDecoration: isUnderline ? 'none' : 'underline' });
-    };
-
-    const toggleStrike = () => {
-        updateNode(nodeId, { textDecoration: isStrike ? 'none' : 'line-through' });
-    };
+    const setFontSizeSel = (size) => styleSelection(() => a => ({ ...a, fontSize: size }));
+    const changeFontSizeSel = (delta) => styleSelection(() => a => ({ ...a, fontSize: Math.max(4, Math.min(200, a.fontSize + delta)) }));
+    const setFontFamilySel = (family) => styleSelection(() => a => ({ ...a, fontFamily: family }));
 
     const handleTextColorChange = (color) => {
-        if (isSticky) {
-            updateNode(nodeId, { textColor: color });
-        } else {
-            updateNode(nodeId, { fill: color });
-        }
+        styleSelection(() => a => ({ ...a, fill: color }));
         setShowColorPicker(false);
     };
 
+    // Toggle bullet/number on just the line(s) the caret/selection covers, so
+    // lists can be mixed line-by-line. While editing we mutate the live textarea
+    // and let its input handler sync the node; otherwise we update the node text.
     const handleListType = (type) => {
-        // Read from the active textarea if editing, because node.text may be stale
-        const activeTextarea = document.querySelector('textarea[data-text-editor="true"]');
-        const currentText = activeTextarea ? activeTextarea.value : (node.text || '');
-        const stripped = stripListPrefixes(currentText);
-
-        if (listType === type) {
-            updateNode(nodeId, { listType: null, text: stripped });
+        const ta = document.querySelector('textarea[data-text-editor="true"]');
+        if (ta) {
+            const { text, selStart, selEnd } = toggleList(ta.value, ta.selectionStart, ta.selectionEnd, type);
+            ta.value = text;
+            ta.selectionStart = selStart;
+            ta.selectionEnd = selEnd;
+            ta.focus();
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
         } else {
-            const prefixed = addListPrefixes(stripped, type);
-            updateNode(nodeId, { listType: type, text: prefixed });
+            const cur = node.text || '';
+            const { text } = toggleList(cur, 0, cur.length, type);
+            updateNode(nodeId, { text });
         }
         setShowMoreOptions(false);
+    };
+
+    // ── Sticky-note only menus ──
+    const setStickySize = (w, h) => updateNode(nodeId, { width: w, height: h });
+    const setStickyBg = (color) => { updateNode(nodeId, { fill: color }); setShowStickyColor(false); };
+    const insertEmoji = (emoji) => {
+        const ta = document.querySelector('textarea[data-text-editor="true"]');
+        if (ta) {
+            const s = ta.selectionStart, e = ta.selectionEnd;
+            ta.value = ta.value.slice(0, s) + emoji + ta.value.slice(e);
+            ta.selectionStart = ta.selectionEnd = s + emoji.length;
+            ta.focus();
+            ta.dispatchEvent(new Event('input', { bubbles: true })); // live-sync to the node
+        } else {
+            updateNode(nodeId, { text: (node.text || '') + emoji });
+        }
+        setShowEmoji(false);
     };
 
     const handleFontSizeInputCommit = () => {
         const val = parseInt(fontSizeInput, 10);
         if (!isNaN(val) && val >= 4 && val <= 200) {
-            updateNode(nodeId, { fontSize: val });
+            setFontSizeSel(val);
             setTextFontSize(val);
         }
         setFontSizeInputFocused(false);
     };
 
-    // Close dropdowns on outside click
-    useEffect(() => {
-        const handleOutside = (e) => {
-            if (toolbarRef.current && !toolbarRef.current.contains(e.target)) {
-                closeAll();
-            }
-        };
-        document.addEventListener('mousedown', handleOutside);
-        return () => document.removeEventListener('mousedown', handleOutside);
-    }, []);
-
-    const left = position.x;
-    const top = Math.max(60, position.y - 54);
+    const left = livePos.x;
+    const top = Math.max(60, livePos.y - 54);
 
     const sepCls = 'w-px h-5 bg-gray-200 mx-0.5 flex-shrink-0';
     const btnBase = 'p-1.5 rounded transition-colors flex-shrink-0 flex items-center justify-center';
@@ -147,7 +231,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
         <div
             ref={toolbarRef}
             data-floating-toolbar="true"
-            className="fixed z-[1100] flex items-center gap-0.5 bg-white rounded-xl shadow-2xl border border-gray-200 px-2 py-1.5"
+            className={`fixed z-[1100] flex items-center gap-0.5 bg-white rounded-xl shadow-2xl border border-gray-200 px-2 py-1.5 ${isDark ? 'menu-accent-edge' : ''}`}
             style={{
                 left,
                 top,
@@ -183,7 +267,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                                 key={font}
                                 tabIndex={-1}
                                 onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                                onClick={() => { updateNode(nodeId, { fontFamily: font }); setTextFontFamily(font); setShowFontFamilies(false); }}
+                                onClick={() => { setFontFamilySel(font); setTextFontFamily(font); setShowFontFamilies(false); }}
                                 className={`w-full px-3 py-1.5 text-sm text-left hover:bg-gray-50 ${currentFontFamily === font ? 'bg-purple-50 text-purple-600 font-medium' : 'text-black'}`}
                                 style={{ fontFamily: `'${font}', sans-serif`, display: 'block', whiteSpace: 'nowrap' }}
                             >
@@ -200,7 +284,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
             <div className="flex items-center gap-0.5 flex-shrink-0">
                 <button
                     tabIndex={-1}
-                    onClick={() => { const newSize = Math.max(4, currentFontSize - 2); updateNode(nodeId, { fontSize: newSize }); setTextFontSize(newSize); }}
+                    onClick={() => changeFontSizeSel(-2)}
                     className={`${btnBase} ${btnIdle} w-6 h-6 text-base`}
                     title="Decrease size"
                 >
@@ -247,7 +331,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                                     key={size}
                                     tabIndex={-1}
                                     onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                                    onClick={() => { updateNode(nodeId, { fontSize: size }); setTextFontSize(size); setShowFontSizes(false); }}
+                                    onClick={() => { setFontSizeSel(size); setTextFontSize(size); setShowFontSizes(false); }}
                                     className={`w-full px-2 py-1 text-sm text-center hover:bg-gray-50 ${size === currentFontSize ? 'bg-purple-50 text-purple-600 font-medium' : 'text-black'}`}
                                     style={{ display: 'block', whiteSpace: 'nowrap' }}
                                 >
@@ -259,7 +343,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                 </div>
                 <button
                     tabIndex={-1}
-                    onClick={() => { const newSize = Math.min(200, currentFontSize + 2); updateNode(nodeId, { fontSize: newSize }); setTextFontSize(newSize); }}
+                    onClick={() => changeFontSizeSel(2)}
                     className={`${btnBase} ${btnIdle} w-6 h-6 text-base`}
                     title="Increase size"
                 >
@@ -299,17 +383,69 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                 </button>
                 {showColorPicker && (
                     <div
-                        className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white rounded-xl shadow-xl border border-gray-200 p-3 z-[160]"
+                        className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white rounded-xl shadow-xl border border-gray-200 p-3 z-[160] w-[220px]"
                         onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}
                     >
                         <ColorPalette
                             selectedColor={currentColor}
                             onColorSelect={handleTextColorChange}
                             title="Text Color"
+                            showEyedropper={false}
                         />
                     </div>
                 )}
             </div>
+
+            {/* ── Sticky-note only: size, note colour, emoji ── */}
+            {isSticky && (
+                <>
+                    <div className={sepCls} />
+                    <div className="flex items-center gap-0.5 flex-shrink-0">
+                        {STICKY_SIZES.map(([label, sz]) => (
+                            <button key={label} tabIndex={-1}
+                                onClick={() => setStickySize(sz, sz)}
+                                className={`${btnBase} ${node.width === sz ? btnActive : btnIdle} w-6 h-6 text-xs font-semibold`}
+                                title={`${label} note`}>{label}</button>
+                        ))}
+                    </div>
+                    <div className={sepCls} />
+                    <div className="relative flex-shrink-0">
+                        <button tabIndex={-1}
+                            onClick={() => { setShowStickyColor(v => !v); setShowEmoji(false); setShowColorPicker(false); setShowFontFamilies(false); setShowFontSizes(false); setShowMoreOptions(false); }}
+                            className={`${btnBase} ${btnIdle}`} title="Note color">
+                            <div className="w-4 h-4 rounded border border-gray-300" style={{ backgroundColor: node.fill || '#fef08a' }} />
+                        </button>
+                        {showStickyColor && (
+                            <div className="absolute top-full right-0 mt-2 bg-white rounded-xl shadow-xl border border-gray-200 p-2 z-[160] w-[136px]"
+                                onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}>
+                                <div className="grid grid-cols-4 gap-1.5 justify-items-center">
+                                    {STICKY_BG_COLORS.map(c => (
+                                        <button key={c} tabIndex={-1} onClick={() => setStickyBg(c)}
+                                            className={`w-6 h-6 rounded border-2 hover:scale-110 transition-transform ${(node.fill || '#fef08a') === c ? 'border-purple-500' : 'border-gray-200'}`}
+                                            style={{ backgroundColor: c }} title={c} />
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    <div className="relative flex-shrink-0">
+                        <button tabIndex={-1}
+                            onClick={() => { setShowEmoji(v => !v); setShowStickyColor(false); setShowColorPicker(false); setShowFontFamilies(false); setShowFontSizes(false); setShowMoreOptions(false); }}
+                            className={`${btnBase} ${btnIdle} text-base`} title="Emoji">🙂</button>
+                        {showEmoji && (
+                            <div className="absolute top-full right-0 mt-2 bg-white rounded-xl shadow-xl border border-gray-200 p-2 z-[160] w-[300px]"
+                                onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}>
+                                <div className="grid grid-cols-8 gap-0.5 max-h-[260px] overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+                                    {EMOJIS.map(em => (
+                                        <button key={em} tabIndex={-1} onClick={() => insertEmoji(em)}
+                                            className="w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100 text-xl" title={em}>{em}</button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </>
+            )}
 
             <div className={sepCls} />
 
@@ -333,14 +469,14 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                         <button
                             tabIndex={-1}
                             onClick={() => handleListType('bullet')}
-                            className={`w-full px-3 py-2 text-sm text-left flex items-center gap-2 hover:bg-gray-50 ${listType === 'bullet' ? 'text-purple-600 bg-purple-50' : 'text-black'}`}
+                            className="w-full px-3 py-2 text-sm text-left flex items-center gap-2 hover:bg-gray-50 text-black"
                         >
                             <List className="w-4 h-4" /> Bullet List
                         </button>
                         <button
                             tabIndex={-1}
                             onClick={() => handleListType('number')}
-                            className={`w-full px-3 py-2 text-sm text-left flex items-center gap-2 hover:bg-gray-50 ${listType === 'number' ? 'text-purple-600 bg-purple-50' : 'text-black'}`}
+                            className="w-full px-3 py-2 text-sm text-left flex items-center gap-2 hover:bg-gray-50 text-black"
                         >
                             <ListOrdered className="w-4 h-4" /> Numbered List
                         </button>
@@ -350,3 +486,4 @@ export default function FloatingTextToolbar({ nodeId, position }) {
         </div>
     );
 }
+

@@ -1,75 +1,11 @@
 import { useRef, useState } from 'react';
-import { X, FileText, Loader2 } from 'lucide-react';
+import { X, FileText } from 'lucide-react';
+import LogoSpinner from '../UI/LogoSpinner';
 import { validateFileSize } from '../../utils/fileHelpers';
+import { loadPdfJs, bytesToBase64 } from '../../utils/pdfHelpers';
 import useStore from '../../store/useStore';
 import { saveMediaToDB } from '../../store/useStore';
 import { cn } from '../../lib/utils';
-
-// Load PDF.js from CDN
-export const loadPdfJs = () => {
-    return new Promise((resolve, reject) => {
-        if (window.pdfjsLib) {
-            resolve(window.pdfjsLib);
-            return;
-        }
-
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-        script.onload = () => {
-            window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-                'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-            resolve(window.pdfjsLib);
-        };
-        script.onerror = reject;
-        document.head.appendChild(script);
-    });
-};
-
-/**
- * Render a single page of a PDF to a data URL.
- * @param {Uint8Array} pdfBytes - Raw PDF file bytes
- * @param {number} pageNum - 1-indexed page number
- * @param {number} scale - Render scale
- */
-export const renderPdfPage = async (pdfBytes, pageNum, scale = 1.5) => {
-    const pdfjsLib = await loadPdfJs();
-    // Copy the bytes so PDF.js doesn't detach the original buffer
-    const bytesCopy = new Uint8Array(pdfBytes);
-    const pdf = await pdfjsLib.getDocument({ data: bytesCopy }).promise;
-    const page = await pdf.getPage(pageNum);
-    const viewport = page.getViewport({ scale });
-
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-
-    await page.render({ canvasContext: context, viewport }).promise;
-    return { dataUrl: canvas.toDataURL('image/png'), width: viewport.width, height: viewport.height };
-};
-
-/**
- * Convert base64 string back to Uint8Array
- */
-export const base64ToBytes = (base64) => {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-};
-
-/**
- * Convert ArrayBuffer/Uint8Array to base64 string
- */
-export const bytesToBase64 = (buffer) => {
-    const uint8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-    let binary = '';
-    const chunkSize = 8192;
-    for (let i = 0; i < uint8.length; i += chunkSize) {
-        binary += String.fromCharCode.apply(null, uint8.subarray(i, i + chunkSize));
-    }
-    return btoa(binary);
-};
 
 export default function PdfUploader({ onClose }) {
     const fileInputRef = useRef(null);
@@ -174,7 +110,7 @@ export default function PdfUploader({ onClose }) {
                         )}
                     >
                         {loading ? (
-                            <Loader2 className="w-10 h-10 mx-auto mb-3 text-blue-500 animate-spin" />
+                            <LogoSpinner className="w-12 h-12 mx-auto mb-3" />
                         ) : (
                             <FileText className="w-10 h-10 mx-auto mb-3 text-gray-400" />
                         )}

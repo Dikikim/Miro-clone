@@ -31,10 +31,10 @@ export default function UnifiedMediaModal({ onClose }) {
     const { addNode, stagePosition, stageScale, theme } = useStore();
     const isDark = theme === 'dark';
 
-    const getCenterPos = () => ({
+    const getCenterPos = useCallback(() => ({
         x: (window.innerWidth / 2 - stagePosition.x) / stageScale,
         y: (window.innerHeight / 2 - stagePosition.y) / stageScale,
-    });
+    }), [stagePosition, stageScale]);
 
     const handleYoutubeChange = (e) => {
         const url = e.target.value;
@@ -96,20 +96,20 @@ export default function UnifiedMediaModal({ onClose }) {
         } finally {
             setUploading(false);
         }
-    }, [addNode, stagePosition, stageScale, onClose]);
+    }, [addNode, getCenterPos, onClose]);
 
-    const handleFiles = (files) => {
+    const handleFiles = useCallback((files) => {
         if (files.length > 0) processFile(files[0]);
-    };
+    }, [processFile]);
 
     const handleDragOver = useCallback((e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }, []);
     const handleDragLeave = useCallback((e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); }, []);
-    const handleDrop = useCallback((e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); handleFiles(e.dataTransfer.files); }, [processFile]);
+    const handleDrop = useCallback((e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); handleFiles(e.dataTransfer.files); }, [handleFiles]);
 
     return (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[200] flex items-center justify-center" onClick={onClose}>
             <div
-                className={`rounded-xl shadow-2xl border p-5 w-[440px] max-w-[90vw] ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+                className={`relative rounded-xl shadow-2xl border p-5 w-[440px] max-w-[90vw] ${isDark ? 'bg-gray-800 border-transparent menu-accent-edge' : 'bg-white border-gray-200'}`}
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}

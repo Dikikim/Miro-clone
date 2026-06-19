@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowUpToLine, ArrowDownToLine, Copy, Lock, Unlock, Trash2, Crop, Eraser, FileDown, Scissors } from 'lucide-react';
 import useStore from '../../store/useStore';
 import { loadMediaFromDB } from '../../store/useStore';
-import { renderPdfPage, base64ToBytes } from '../Upload/PdfUploader';
+import { renderPdfPage, base64ToBytes } from '../../utils/pdfHelpers';
 
 // --- Crop Overlay with 6 handles ---
 function openCropOverlay(node, updateNode) {
@@ -88,7 +88,7 @@ function openCropOverlay(node, updateNode) {
         });
     });
 
-    document.addEventListener('mousemove', function onMove(e) {
+    function onMove(e) {
         if (!activeHandle) return;
         const dx = e.clientX - startMx;
         const dy = e.clientY - startMy;
@@ -103,8 +103,10 @@ function openCropOverlay(node, updateNode) {
         if (activeHandle === 'bc') { ch = Math.max(20, Math.min(startCh + dy, imgH - startCy)); }
 
         updateCropUI();
-    });
-    document.addEventListener('mouseup', function onUp() { activeHandle = null; });
+    }
+    function onUp() { activeHandle = null; }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
 
     // Buttons
     const btnBar = document.createElement('div');
@@ -136,13 +138,22 @@ function openCropOverlay(node, updateNode) {
         cleanup();
     };
 
+    function onKey(e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cleanup(); }
+    }
+
     function cleanup() {
-        document.body.removeChild(overlay);
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener('keydown', onKey, true);
+        if (overlay.parentNode) document.body.removeChild(overlay);
     }
 
     btnBar.appendChild(cancelBtn); btnBar.appendChild(applyBtn);
     overlay.appendChild(container); overlay.appendChild(btnBar);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+    // Intentionally NOT closing on backdrop click — clicking outside the crop
+    // box used to dismiss the editor mid-crop. Use Cancel / Apply / Esc instead.
+    document.addEventListener('keydown', onKey, true);
     document.body.appendChild(overlay);
     // Wait for image to load if cached
     if (img.complete) img.onload();
@@ -176,8 +187,34 @@ export default function ContextMenu() {
     const isAnyImage = node.type === 'image'; // all images (including extracted PDF pages)
     const isImage = node.type === 'image' && !node.extractedFromPdfId; // non-extracted images only
     const isPdf = node.type === 'pdf';
-    const isDoc = isPdf || node.type === 'audio' || node.type === 'video' || node.type === 'youtube';
     const canCrop = isAnyImage;
+    const canSave = (node.type === 'image' || node.type === 'audio' || node.type === 'video') && !!node.src;
+
+    // Download the underlying file (extracted page, image, audio or video) to disk
+    const handleSaveFile = async () => {
+        hideContextMenu();
+        let src = node.src;
+        if (!src) return;
+        // Recover from IndexedDB if the in-memory src is just a placeholder
+        if (typeof src === 'string' && src.startsWith('__idb__')) {
+            src = await loadMediaFromDB(src.replace('__idb__', '')) || await loadMediaFromDB(node.id);
+        }
+        if (!src) return;
+
+        let name = node.fileName;
+        if (!name) {
+            if (node.type === 'image') name = node.extractedFromPdfId ? 'extracted-page.png' : 'image.png';
+            else if (node.type === 'audio') name = 'audio';
+            else if (node.type === 'video') name = 'video';
+            else name = 'file';
+        }
+        const a = document.createElement('a');
+        a.href = src;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    };
 
     const handleCrop = () => {
         if (!node.src) return;
@@ -293,6 +330,10 @@ export default function ContextMenu() {
         { divider: true },
         { label: 'Duplicate', icon: Copy, action: () => duplicateNode(node.id) },
         { label: isLocked ? 'Unlock' : 'Lock', icon: isLocked ? Unlock : Lock, action: () => toggleLock(node.id) },
+        ...(canSave ? [
+            { divider: true },
+            { label: 'Save', icon: FileDown, action: handleSaveFile },
+        ] : []),
         ...(canCrop ? [
             { divider: true },
             { label: 'Crop', icon: Crop, action: handleCrop },
@@ -310,7 +351,7 @@ export default function ContextMenu() {
     ];
 
     const menuWidth = 220;
-    const menuHeight = (canCrop || isPdf) ? 380 : 250;
+    const menuHeight = (canCrop || isPdf) ? 420 : (canSave ? 300 : 250);
     const x = Math.min(contextMenu.x, window.innerWidth - menuWidth - 10);
     const y = Math.min(contextMenu.y, window.innerHeight - menuHeight - 10);
 

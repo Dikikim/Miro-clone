@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { ChevronDown, Check, Pencil, Plus, Trash2, Search } from 'lucide-react';
 import useStore from '../../store/useStore';
 import ConfirmModal from './ConfirmModal';
@@ -19,6 +19,14 @@ export default function BoardSwitcher() {
     const editInputRef = useRef(null);
     const searchInputRef = useRef(null);
 
+    const handleRenameSubmit = useCallback((id) => {
+        const trimmed = editValue.trim();
+        if (trimmed && trimmed !== boardNames[id]) {
+            renameBoard(id, trimmed);
+        }
+        setEditingId(null);
+    }, [editValue, boardNames, renameBoard]);
+
     // Close dropdown on outside click
     useEffect(() => {
         const handleClickOutside = (e) => {
@@ -29,7 +37,7 @@ export default function BoardSwitcher() {
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [editingId, editValue]);
+    }, [editingId, handleRenameSubmit]);
 
     // Focus input when editing
     useEffect(() => {
@@ -59,14 +67,6 @@ export default function BoardSwitcher() {
         setEditValue(boardNames[id]);
     };
 
-    const handleRenameSubmit = (id) => {
-        const trimmed = editValue.trim();
-        if (trimmed && trimmed !== boardNames[id]) {
-            renameBoard(id, trimmed);
-        }
-        setEditingId(null);
-    };
-
     const handleAddBoard = () => {
         const newId = addBoard();
         if (newId !== null) {
@@ -83,7 +83,7 @@ export default function BoardSwitcher() {
             {/* Trigger button */}
             <button
                 onClick={() => { setIsOpen(!isOpen); setBoardSearch(''); }}
-                className={`flex items-center gap-2 px-3 py-2 border rounded-lg text-sm font-medium transition-colors shadow-sm ${isDark ? 'bg-gray-700 border-gray-600 text-gray-200 hover:bg-gray-600' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium shadow-sm ${isDark ? 'glass-chip-dark text-gray-200' : 'glass-chip text-gray-700'}`}
                 style={{ minWidth: '120px' }}
             >
                 <span
@@ -97,7 +97,7 @@ export default function BoardSwitcher() {
             {/* Dropdown */}
             {isOpen && (
                 <div
-                    className={`absolute right-0 top-full mt-2 rounded-xl shadow-xl border py-1.5 z-[100] ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+                    className={`absolute -right-4 top-full mt-2 rounded-xl py-1.5 z-[100] ${isDark ? 'popup-solid-dark menu-accent-edge' : 'popup-solid'}`}
                     style={{ width: '260px' }}
                 >
                     {/* Search */}
@@ -148,7 +148,7 @@ export default function BoardSwitcher() {
                                     />
                                 ) : (
                                     <span className={`flex-1 text-sm truncate ${id === currentBoardId
-                                        ? 'font-semibold text-purple-700'
+                                        ? (isDark ? 'font-semibold text-purple-300' : 'font-semibold text-purple-700')
                                         : name.startsWith('Board ')
                                             ? (isDark ? 'text-gray-500' : 'text-gray-400')
                                             : (isDark ? 'text-gray-300' : 'text-gray-700')
@@ -181,7 +181,7 @@ export default function BoardSwitcher() {
 
                                 {/* Active checkmark */}
                                 {id === currentBoardId && editingId !== id && (
-                                    <Check className="w-4 h-4 text-purple-600 flex-shrink-0" />
+                                    <Check className={`w-4 h-4 flex-shrink-0 ${isDark ? 'text-purple-300' : 'text-purple-600'}`} />
                                 )}
                             </div>
                         ))}

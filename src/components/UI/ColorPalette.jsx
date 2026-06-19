@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 
 const STORAGE_KEY = 'kot_custom_colors';
 
@@ -26,19 +26,19 @@ function loadCustomColors() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (raw) return JSON.parse(raw);
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
     return [];
 }
 
 function saveCustomColors(colors) {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(colors));
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
 }
 
-export default function ColorPalette({ selectedColor, onColorSelect, title = 'Color', showTransparent = false }) {
+export default function ColorPalette({ selectedColor, onColorSelect, title = 'Color', showTransparent = false, showEyedropper = true }) {
     const [customColors, setCustomColors] = useState(loadCustomColors);
-    const [showEyedropper, setShowEyedropper] = useState(typeof window !== 'undefined' && 'EyeDropper' in window);
+    const eyedropperSupported = typeof window !== 'undefined' && 'EyeDropper' in window;
 
     const addCustomColor = (color) => {
         const updated = [color, ...customColors.filter(c => c !== color)].slice(0, 10);
@@ -52,7 +52,7 @@ export default function ColorPalette({ selectedColor, onColorSelect, title = 'Co
             const result = await eyeDropper.open();
             onColorSelect(result.sRGBHex);
             addCustomColor(result.sRGBHex);
-        } catch (e) { /* user cancelled */ }
+        } catch { /* user cancelled */ }
     };
 
     return (
@@ -108,7 +108,7 @@ export default function ColorPalette({ selectedColor, onColorSelect, title = 'Co
 
             {/* Eyedropper + Custom input */}
             <div className="flex gap-1.5 items-center">
-                {showEyedropper && (
+                {showEyedropper && eyedropperSupported && (
                     <button
                         onClick={handleEyedropper}
                         className="flex items-center gap-1 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded transition-colors"

@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Copy, Download, ChevronLeft, ChevronRight, X, Check, Loader2, Maximize2, Grid2x2, FileDown } from 'lucide-react';
+import { Copy, Download, ChevronLeft, ChevronRight, X, Check, FileDown, ZoomIn, ZoomOut } from 'lucide-react';
 import useStore from '../../store/useStore';
+import LogoSpinner from '../UI/LogoSpinner';
 import { loadMediaFromDB } from '../../store/useStore';
-import { renderPdfPage, base64ToBytes } from '../Upload/PdfUploader';
+import { renderPdfPage, base64ToBytes } from '../../utils/pdfHelpers';
 
 /**
  * Helper to load PDF bytes from IndexedDB for a given node.
@@ -299,12 +300,14 @@ export default function PdfOverlay({ node, stagePosition, stageScale, isSelected
  * Single Page Viewer Modal — full-screen overlay showing one PDF page.
  * Supports prev/next navigation and downloading the current page as PNG.
  */
-function SinglePageModal({ node, onClose, onNavigate, navigating, onDownloadPage }) {
+function SinglePageModal({ node, onClose, onNavigate }) {
     const [pageImage, setPageImage] = useState(null);
     const [loadingPage, setLoadingPage] = useState(true);
     const [currentPage, setCurrentPage] = useState(node.currentPage || 1);
     const totalPages = node.totalPages || 1;
     const pdfBytesRef = useRef(null);
+    // Page to show on open; later navigation renders via goToPage, not this effect
+    const initialPageRef = useRef(node.currentPage || 1);
 
     // Load PDF bytes once
     useEffect(() => {
@@ -314,7 +317,7 @@ function SinglePageModal({ node, onClose, onNavigate, navigating, onDownloadPage
                 const bytes = await getPdfBytes(node.id);
                 if (!cancelled && bytes) {
                     pdfBytesRef.current = bytes;
-                    const { dataUrl } = await renderPdfPage(bytes, currentPage, 2);
+                    const { dataUrl } = await renderPdfPage(bytes, initialPageRef.current, 2);
                     if (!cancelled) { setPageImage(dataUrl); setLoadingPage(false); }
                 } else if (!cancelled) {
                     setLoadingPage(false);
@@ -403,7 +406,7 @@ function SinglePageModal({ node, onClose, onNavigate, navigating, onDownloadPage
             <div className="flex-1 flex items-center justify-center overflow-auto p-6">
                 {loadingPage ? (
                     <div className="flex flex-col items-center gap-3 text-white">
-                        <Loader2 className="w-10 h-10 animate-spin text-blue-400" />
+                        <LogoSpinner className="w-14 h-14" />
                         <span className="text-sm text-gray-400">Rendering page...</span>
                     </div>
                 ) : pageImage ? (
@@ -540,7 +543,7 @@ function MultiPageModal({ node, onClose, onNavigate }) {
             <div className="flex-1 overflow-auto p-6">
                 {loadingThumbnails && Object.keys(thumbnails).length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full gap-3 text-white">
-                        <Loader2 className="w-10 h-10 animate-spin text-blue-400" />
+                        <LogoSpinner className="w-14 h-14" />
                         <span className="text-sm text-gray-400">Rendering pages...</span>
                     </div>
                 ) : (
@@ -574,7 +577,7 @@ function MultiPageModal({ node, onClose, onNavigate }) {
                                     />
                                 ) : (
                                     <div className="w-full h-full flex items-center justify-center">
-                                        <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+                                        <LogoSpinner className="w-7 h-7" />
                                     </div>
                                 )}
                                 <div style={{
@@ -652,22 +655,161 @@ function OverlayButton({ children, onClick, disabled, title }) {
 
 
 /**
+ * Full-size page viewer — opens a single PDF page large, with zoom in/out,
+ * scrolling, and fit-to-screen. Only the X (or Esc) closes it; clicking the
+ * backdrop does NOT, so the preview stays put until explicitly dismissed.
+ */
+function PageZoomViewer({ node, pageNum, totalPages, pdfBytesRef, selectedPages, onToggleSelect, onExtract, onClose }) {
+    const [page, setPage] = useState(pageNum);
+    const [img, setImg] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [zoom, setZoom] = useState(1);
+    const [goVal, setGoVal] = useState('');
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            setLoading(true);
+            try {
+                const bytes = pdfBytesRef?.current || await getPdfBytes(node.id);
+                if (!bytes) { if (!cancelled) setLoading(false); return; }
+                const { dataUrl } = await renderPdfPage(bytes, page, 2.5);
+                if (!cancelled) { setImg(dataUrl); setLoading(false); }
+            } catch (e) {
+                console.error('Zoom render error:', e);
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [node.id, page, pdfBytesRef]);
+
+    const go = useCallback((p) => setPage(Math.max(1, Math.min(p, totalPages))), [totalPages]);
+
+    useEffect(() => {
+        const onKey = (e) => {
+            if (e.key === 'Escape') onClose();
+            else if (e.key === 'ArrowLeft') go(page - 1);
+            else if (e.key === 'ArrowRight') go(page + 1);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose, go, page]);
+
+    const clamp = (z) => Math.min(6, Math.max(0.25, +z.toFixed(2)));
+    const goTo = (v) => { const t = parseInt(v, 10); if (!isNaN(t)) { go(t); setGoVal(''); } };
+    const isSelected = selectedPages.has(page);
+    const btn = 'w-8 h-8 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors';
+    const navBtn = 'w-8 h-8 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white transition-colors';
+
+    return (
+        <div
+            className="fixed inset-0 z-[80] flex flex-col"
+            style={{ background: 'rgba(8,10,14,0.96)', backdropFilter: 'blur(4px)' }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+        >
+            {/* Toolbar — accent edge; only the X (or Esc) closes the viewer */}
+            <div className="flex items-center justify-between px-4 py-2.5 border-b"
+                style={{ borderImage: 'linear-gradient(135deg,#7b5ea7,#4a90d9,#2ec4b6) 1', borderColor: '#4a90d9' }}>
+                <span className="text-gray-200 text-sm font-medium truncate" style={{ maxWidth: '40vw' }}>
+                    {node.fileName} — page {page}
+                </span>
+                <div className="flex items-center gap-2">
+                    <button className={btn} title="Zoom out" onClick={() => setZoom(z => clamp(z - 0.25))}><ZoomOut size={16} /></button>
+                    <span className="text-gray-300 text-xs w-12 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
+                    <button className={btn} title="Zoom in" onClick={() => setZoom(z => clamp(z + 0.25))}><ZoomIn size={16} /></button>
+                    <button className="px-2.5 h-8 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs transition-colors" title="Fit to screen" onClick={() => setZoom(1)}>Fit</button>
+                    <div className="w-px h-5 bg-white/15 mx-1" />
+                    <button className={btn} title="Close" onClick={onClose}><X size={18} /></button>
+                </div>
+            </div>
+            {/* Scrollable / zoomable page (wheel scrolls; Ctrl/⌘+wheel zooms) */}
+            <div
+                className="flex-1 overflow-auto"
+                style={{ display: 'flex' }}
+                onWheel={(e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(z => clamp(z - e.deltaY * 0.002)); } }}
+            >
+                {loading ? (
+                    <div className="m-auto flex flex-col items-center gap-3 text-white">
+                        <LogoSpinner className="w-16 h-16" />
+                        <span className="text-sm text-gray-400">Rendering page…</span>
+                    </div>
+                ) : img ? (
+                    <img
+                        src={img}
+                        alt={`Page ${page}`}
+                        draggable={false}
+                        style={{
+                            margin: 'auto',
+                            height: `${80 * zoom}vh`,
+                            width: 'auto',
+                            maxWidth: zoom <= 1 ? '94vw' : 'none',
+                            objectFit: 'contain',
+                            background: '#fff',
+                            borderRadius: 4,
+                            boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+                        }}
+                    />
+                ) : (
+                    <div className="m-auto text-gray-400 text-sm">Could not render page</div>
+                )}
+            </div>
+            {/* Bottom bar — page navigation + select / extract */}
+            <div className="flex items-center justify-center flex-wrap gap-3 px-4 py-2.5 border-t" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+                <button className={navBtn} disabled={page <= 1} onClick={() => go(page - 1)} title="Previous page"><ChevronLeft size={18} /></button>
+                <span className="text-gray-200 text-sm tabular-nums">Page {page} of {totalPages}</span>
+                <button className={navBtn} disabled={page >= totalPages} onClick={() => go(page + 1)} title="Next page"><ChevronRight size={18} /></button>
+
+                <div className="flex items-center gap-1.5 ml-1 text-sm">
+                    <span className="text-gray-400">Go to</span>
+                    <input
+                        type="number" min={1} max={totalPages} value={goVal} placeholder="#"
+                        onChange={(e) => setGoVal(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') goTo(goVal); e.stopPropagation(); }}
+                        className="w-16 text-center text-sm rounded px-1 py-0.5 bg-white/10 text-white border border-white/15 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        style={{ MozAppearance: 'textfield' }}
+                    />
+                    <button onClick={() => goTo(goVal)} className="px-2.5 py-1 text-xs font-medium text-white bg-blue-500 rounded hover:bg-blue-600 transition-colors">Go</button>
+                </div>
+
+                <div className="w-px h-6 bg-white/15 mx-1" />
+
+                {/* Select this page */}
+                <button
+                    onClick={() => onToggleSelect(page)}
+                    className={`px-3 py-1.5 text-sm rounded-lg flex items-center gap-1.5 transition-colors ${isSelected ? 'bg-blue-500 text-white' : 'bg-white/10 text-gray-200 hover:bg-white/20'}`}
+                >
+                    {isSelected ? <Check size={15} /> : <span style={{ width: 15 }} />}
+                    {isSelected ? 'Selected' : 'Select page'}
+                </button>
+                {/* Extract the current selection */}
+                <button
+                    onClick={onExtract}
+                    disabled={selectedPages.size === 0}
+                    className="px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                    Extract {selectedPages.size} page{selectedPages.size !== 1 ? 's' : ''}
+                </button>
+            </div>
+        </div>
+    );
+}
+
+/**
  * Modal for selecting and extracting individual pages
  * from a PDF document node onto the canvas.
  * Includes page thumbnail previews.
  */
-function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }) {
-    const { nodes } = useStore();
+function ExtractPagesModal({ node, onClose, addNode }) {
+    const { nodes, updateNode, theme } = useStore();
+    const isDark = theme === 'dark';
     const [selectedPages, setSelectedPages] = useState(new Set());
     const [loading, setLoading] = useState(false);
-    const [currentPreviewPage, setCurrentPreviewPage] = useState(1);
-    const [previewImage, setPreviewImage] = useState(null);
-    const [loadingPreview, setLoadingPreview] = useState(true);
-    const [pageInputValue, setPageInputValue] = useState('1');
-    const [editingPageInput, setEditingPageInput] = useState(false);
-    const [viewMode, setViewMode] = useState('single'); // 'single' or 'grid'
+    const [bytesReady, setBytesReady] = useState(false);
     const [gridThumbnails, setGridThumbnails] = useState({});
     const [gridStartPage, setGridStartPage] = useState(1);
+    const [gridJumpValue, setGridJumpValue] = useState('');
+    const [zoomPage, setZoomPage] = useState(null);
     const [loadingGrid, setLoadingGrid] = useState(false);
     const GRID_PAGE_COUNT = 10;
     const totalPages = node.totalPages;
@@ -681,45 +823,15 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
                 const bytes = await getPdfBytes(node.id);
                 if (!cancelled && bytes) {
                     pdfBytesRef.current = bytes;
-                    // Render first page
-                    const { dataUrl } = await renderPdfPage(bytes, 1, 1.5);
-                    if (!cancelled) {
-                        setPreviewImage(dataUrl);
-                        setLoadingPreview(false);
-                    }
-                } else {
-                    setLoadingPreview(false);
+                    if (!cancelled) setBytesReady(true);
                 }
             } catch (e) {
                 console.error('PDF load error:', e);
-                if (!cancelled) setLoadingPreview(false);
             }
         };
         loadBytes();
         return () => { cancelled = true; };
     }, [node.id]);
-
-    // Navigate to a specific page preview
-    const goToPreviewPage = useCallback(async (pageNum) => {
-        const target = Math.max(1, Math.min(parseInt(pageNum, 10), totalPages));
-        if (isNaN(target) || !pdfBytesRef.current) return;
-        setLoadingPreview(true);
-        setCurrentPreviewPage(target);
-        setPageInputValue(String(target));
-        try {
-            const { dataUrl } = await renderPdfPage(pdfBytesRef.current, target, 1.5);
-            setPreviewImage(dataUrl);
-        } catch (e) {
-            console.error('Preview error:', e);
-        }
-        setLoadingPreview(false);
-    }, [totalPages]);
-
-    const toggleCurrentPage = () => {
-        const s = new Set(selectedPages);
-        s.has(currentPreviewPage) ? s.delete(currentPreviewPage) : s.add(currentPreviewPage);
-        setSelectedPages(s);
-    };
 
     const togglePage = (p) => {
         const s = new Set(selectedPages);
@@ -730,23 +842,31 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
     // Load grid thumbnails when in grid mode
     const gridEndPage = Math.min(gridStartPage + GRID_PAGE_COUNT - 1, totalPages);
     useEffect(() => {
-        if (viewMode !== 'grid' || !pdfBytesRef.current) return;
+        if (!bytesReady || !pdfBytesRef.current) return;
         let cancelled = false;
+        // Render the whole page group concurrently and drop each thumbnail into
+        // the grid the instant it's ready — so pages appear progressively instead
+        // of the user waiting on a spinner until the entire batch finishes.
         const load = async () => {
             setLoadingGrid(true);
-            const thumbs = {};
+            let firstShown = false;
+            const tasks = [];
             for (let p = gridStartPage; p <= gridEndPage; p++) {
-                if (cancelled) break;
-                try {
-                    const { dataUrl } = await renderPdfPage(pdfBytesRef.current, p, 0.6);
-                    thumbs[p] = dataUrl;
-                } catch (e) { console.error(e); }
+                tasks.push((async (page) => {
+                    try {
+                        const { dataUrl } = await renderPdfPage(pdfBytesRef.current, page, 0.5);
+                        if (cancelled) return;
+                        setGridThumbnails(prev => ({ ...prev, [page]: dataUrl }));
+                        if (!firstShown) { firstShown = true; setLoadingGrid(false); }
+                    } catch (e) { console.error(e); }
+                })(p));
             }
-            if (!cancelled) { setGridThumbnails(prev => ({ ...prev, ...thumbs })); setLoadingGrid(false); }
+            await Promise.all(tasks);
+            if (!cancelled) setLoadingGrid(false);
         };
         load();
         return () => { cancelled = true; };
-    }, [viewMode, gridStartPage, gridEndPage]);
+    }, [bytesReady, gridStartPage, gridEndPage]);
 
     const selectAll = () => {
         const all = new Set();
@@ -755,20 +875,62 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
     };
     const selectNone = () => setSelectedPages(new Set());
 
+    // Jump the grid so it starts at a manually typed page.
+    const jumpGridToPage = (val) => {
+        const target = Math.max(1, Math.min(parseInt(val, 10), totalPages));
+        if (!isNaN(target)) { setGridStartPage(target); setGridJumpValue(''); }
+    };
+
+    // Zoom in on one page: open the full-size, scrollable/zoomable page viewer.
+    const previewPage = (p) => setZoomPage(p);
+
     const extractPages = async () => {
         if (selectedPages.size === 0) return;
         setLoading(true);
 
-        const PAGE_W = 400;
-        const PAGE_H = 566;
+        const CELL_W = 400;         // every page occupies an identical cell
+        const CELL_H = 566;
         const GAP_X = 20;
         const GAP_Y = 30;
-        const COLS = 10;
+        const COLS = 10;            // exactly 10 pages per row
+        const stepX = CELL_W + GAP_X;
+        const stepY = CELL_H + GAP_Y;
 
-        const alreadyPlaced = nodes.filter(n => n.extractedFromPdfId === node.id).length;
-        const nodeBottom = node.y + (node.height || 400);
-        const baseX = node.x;
-        const baseY = nodeBottom + 40;
+        const existing = nodes.filter(n => n.extractedFromPdfId === node.id);
+
+        // A STABLE grid origin for this PDF, fixed on the first extraction and
+        // stored on the PDF node. Because it never moves, every extraction keeps
+        // continuing the SAME 10-per-row grid — even after pages (or the PDF) get
+        // dragged around. Legacy grids with no stored origin fall back to their
+        // current top-left corner.
+        let baseX = node.extractGridX;
+        let baseY = node.extractGridY;
+        if (baseX == null || baseY == null) {
+            if (existing.length > 0) {
+                baseX = Math.min(...existing.map(n => n.x));
+                baseY = Math.min(...existing.map(n => n.y));
+            } else {
+                baseX = node.x;
+                baseY = node.y + (node.height || 400) + 40;
+            }
+            updateNode(node.id, { extractGridX: baseX, extractGridY: baseY });
+        }
+
+        // Slots already taken across all previous extractions. Each page carries
+        // its own slot index, so a moved page still reserves its place and new
+        // pages never reuse it (no overlap). Legacy pages without a stored slot
+        // have it inferred from position.
+        const occupied = new Set();
+        existing.forEach(n => {
+            let slot = n.pdfSlot;
+            if (slot == null) {
+                const c = Math.round((n.x - baseX) / stepX);
+                const r = Math.round((n.y - baseY) / stepY);
+                if (c >= 0 && c < COLS && r >= 0) slot = r * COLS + c;
+            }
+            if (slot != null && slot >= 0) occupied.add(slot);
+        });
+        const nextFreeSlot = () => { let i = 0; while (occupied.has(i)) i++; occupied.add(i); return i; };
 
         try {
             const bytes = pdfBytesRef.current || await getPdfBytes(node.id);
@@ -776,22 +938,31 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
 
             const sortedPages = [...selectedPages].sort((a, b) => a - b);
 
+            // Uniform grid: exactly COLS pages per row, every cell the same size.
+            // Each page is scaled to FIT inside its cell (aspect ratio preserved,
+            // so no distortion) and centred — because no image ever exceeds its
+            // cell, pages can never overlap regardless of page size/orientation.
             for (let i = 0; i < sortedPages.length; i++) {
-                const pageNum = sortedPages[i];
-                const gridIndex = alreadyPlaced + i;
-                const col = gridIndex % COLS;
-                const row = Math.floor(gridIndex / COLS);
+                const slot = nextFreeSlot();
+                const col = slot % COLS;
+                const row = Math.floor(slot / COLS);
+                const cellX = baseX + col * stepX;
+                const cellY = baseY + row * stepY;
 
-                const { dataUrl } = await renderPdfPage(bytes, pageNum, 2);
+                const { dataUrl, width, height } = await renderPdfPage(bytes, sortedPages[i], 2);
+                const scale = Math.min(CELL_W / width, CELL_H / height);
+                const imgW = Math.round(width * scale);
+                const imgH = Math.round(height * scale);
 
                 addNode({
                     type: 'image',
-                    x: baseX + col * (PAGE_W + GAP_X),
-                    y: baseY + row * (PAGE_H + GAP_Y),
-                    width: PAGE_W,
-                    height: PAGE_H,
+                    x: cellX + (CELL_W - imgW) / 2,
+                    y: cellY + (CELL_H - imgH) / 2,
+                    width: imgW,
+                    height: imgH,
                     src: dataUrl,
                     extractedFromPdfId: node.id,
+                    pdfSlot: slot,
                 });
             }
         } catch (e) {
@@ -802,167 +973,68 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
         onClose();
     };
 
-    const isCurrentSelected = selectedPages.has(currentPreviewPage);
+    // Dark-mode tokens. In dark mode every menu edge gets a thin gradient border
+    // in the brand "circle" colours (purple→blue→teal); light mode is unchanged.
+    const ui = {
+        head: isDark ? 'border-white/10' : 'border-gray-200',
+        title: isDark ? 'text-gray-100' : 'text-gray-800',
+        sub: isDark ? 'text-gray-400' : 'text-gray-500',
+        body: isDark ? 'text-gray-300' : 'text-gray-600',
+        navBtn: isDark ? 'border-white/15 text-gray-300 hover:bg-white/10' : 'border-gray-300 text-gray-600 hover:bg-gray-100',
+        cellBg: isDark ? '#23262f' : '#f9fafb',
+        cellBorder: isDark ? '#3a3f4b' : '#e5e7eb',
+        labelBg: isDark ? 'rgba(18,20,26,0.85)' : 'rgba(255,255,255,0.85)',
+        labelColor: isDark ? '#cbd5e1' : '#6b7280',
+        footer: isDark ? 'bg-[#15171e]' : 'bg-gray-50',
+        cancel: isDark ? 'text-gray-300 hover:text-white hover:bg-white/10' : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100',
+        inputCls: isDark ? 'border-white/15' : 'border-gray-300',
+        inputStyle: isDark ? { color: '#e5e7eb', backgroundColor: '#23262f' } : { color: '#1a1a1a', backgroundColor: '#ffffff' },
+    };
+    const panelStyle = isDark
+        ? { width: '70vw', height: '70vh', border: '1px solid transparent', background: 'linear-gradient(#181a21,#181a21) padding-box, linear-gradient(135deg,#7b5ea7,#4a90d9,#2ec4b6) border-box' }
+        : { width: '70vw', height: '70vh' };
 
     return (
+        <>
         <div
             className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center"
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
             onMouseDown={(e) => e.stopPropagation()}
         >
-            <div className="bg-white rounded-xl shadow-xl max-w-[95vw] max-h-[90vh] overflow-hidden flex flex-col" style={{ width: viewMode === 'grid' ? '720px' : '520px', transition: 'width 0.3s' }}>
+            <div className={`rounded-xl shadow-xl overflow-hidden flex flex-col ${isDark ? '' : 'bg-white'}`} style={panelStyle}>
                 {/* Header */}
-                <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
+                <div className={`flex items-center justify-between px-5 py-3 border-b ${ui.head}`}>
                     <div>
-                        <h2 className="font-semibold text-gray-800 text-base">Extract Pages</h2>
-                        <p className="text-xs text-gray-500 mt-0.5">{node.fileName} · {totalPages} page{totalPages !== 1 ? 's' : ''}</p>
+                        <h2 className={`font-semibold text-base ${ui.title}`}>Extract Pages</h2>
+                        <p className={`text-xs mt-0.5 ${ui.sub}`}>{node.fileName} · {totalPages} page{totalPages !== 1 ? 's' : ''}</p>
                     </div>
-                    <div className="flex items-center gap-2">
-                        {/* View mode toggle */}
-                        <div className="flex rounded-lg border border-gray-300 overflow-hidden">
-                            <button
-                                onClick={() => setViewMode('single')}
-                                className={`px-2.5 py-1 text-xs font-medium flex items-center gap-1 transition-colors ${viewMode === 'single' ? 'bg-blue-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                                title="Single page view"
-                            >
-                                <Maximize2 size={13} /> Single
-                            </button>
-                            <button
-                                onClick={() => setViewMode('grid')}
-                                className={`px-2.5 py-1 text-xs font-medium flex items-center gap-1 transition-colors ${viewMode === 'grid' ? 'bg-blue-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                                title="Grid view (10 pages)"
-                            >
-                                <Grid2x2 size={13} /> Grid
-                            </button>
-                        </div>
-                        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
-                            <X className="w-5 h-5" />
-                        </button>
-                    </div>
+                    <button onClick={onClose} className={`transition-colors ${isDark ? 'text-gray-400 hover:text-gray-200' : 'text-gray-400 hover:text-gray-600'}`}>
+                        <X className="w-5 h-5" />
+                    </button>
                 </div>
 
                 {/* Content area — switches between single and grid view */}
-                <div className="flex-1 overflow-auto px-5 py-4">
-                    {viewMode === 'single' ? (
-                        <>
-                            {/* Page preview */}
-                            <div
-                                className="relative mx-auto rounded-lg overflow-hidden border-2 transition-colors"
-                                style={{
-                                    maxWidth: '340px',
-                                    aspectRatio: '3/4',
-                                    borderColor: isCurrentSelected ? '#3b82f6' : '#e5e7eb',
-                                    boxShadow: isCurrentSelected ? '0 0 0 3px rgba(59,130,246,0.2)' : '0 2px 8px rgba(0,0,0,0.08)',
-                                    cursor: 'pointer',
-                                }}
-                                onClick={toggleCurrentPage}
-                            >
-                                {loadingPreview ? (
-                                    <div className="w-full h-full bg-gray-50 flex items-center justify-center">
-                                        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                                    </div>
-                                ) : previewImage ? (
-                                    <img
-                                        src={previewImage}
-                                        alt={`Page ${currentPreviewPage}`}
-                                        style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#f9fafb' }}
-                                    />
-                                ) : (
-                                    <div className="w-full h-full bg-gray-50 flex items-center justify-center text-gray-400">
-                                        Page {currentPreviewPage}
-                                    </div>
-                                )}
-
-                                {/* Selection badge */}
-                                <div
-                                    className="absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center transition-all"
-                                    style={{
-                                        background: isCurrentSelected ? '#3b82f6' : 'rgba(255,255,255,0.9)',
-                                        border: isCurrentSelected ? 'none' : '2px solid #d1d5db',
-                                        boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
-                                    }}
-                                >
-                                    {isCurrentSelected && <Check size={14} color="white" strokeWidth={3} />}
-                                </div>
-
-                                {/* Click hint */}
-                                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/40 to-transparent px-3 py-2">
-                                    <span className="text-white text-xs font-medium">
-                                        {isCurrentSelected ? '✓ Selected — click to deselect' : 'Click to select this page'}
-                                    </span>
-                                </div>
+                <div className="flex-1 overflow-hidden px-5 py-4 relative flex flex-col">
+                    {/* Faded logo watermark behind the grid (90% of the area) */}
+                    <img src="/logo-spinner.png" alt="" aria-hidden="true"
+                        className="pointer-events-none select-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+                        style={{ width: '90%', height: '90%', objectFit: 'contain', opacity: isDark ? 0.08 : 0.05, zIndex: 0 }} />
+                    {/* Grid — 5×2 thumbnails sized to fit the window without scrolling */}
+                    <div className="relative flex-1 min-h-0 flex flex-col" style={{ zIndex: 1 }}>
+                        {loadingGrid && Object.keys(gridThumbnails).length === 0 ? (
+                            <div className="flex-1 flex flex-col items-center justify-center gap-3">
+                                <LogoSpinner className="w-12 h-12" />
+                                <span className={`text-sm ${ui.sub}`}>Rendering thumbnails...</span>
                             </div>
-
-                            {/* Page navigation */}
-                            <div className="flex items-center justify-center gap-3 mt-4">
-                                <button
-                                    onClick={() => goToPreviewPage(currentPreviewPage - 1)}
-                                    disabled={currentPreviewPage <= 1 || loadingPreview}
-                                    className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                                >
-                                    <ChevronLeft size={18} />
-                                </button>
-
-                                <div className="flex items-center gap-1.5 text-sm">
-                                    <span className="text-gray-500">Page</span>
-                                    {editingPageInput ? (
-                                        <input
-                                            autoFocus
-                                            type="number"
-                                            min={1}
-                                            max={totalPages}
-                                            value={pageInputValue}
-                                            onChange={(e) => setPageInputValue(e.target.value)}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                    goToPreviewPage(pageInputValue);
-                                                    setEditingPageInput(false);
-                                                }
-                                                if (e.key === 'Escape') setEditingPageInput(false);
-                                                e.stopPropagation();
-                                            }}
-                                            onBlur={() => {
-                                                goToPreviewPage(pageInputValue);
-                                                setEditingPageInput(false);
-                                            }}
-                                            className="w-12 text-center text-sm font-medium border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-300"
-                                            style={{ MozAppearance: 'textfield', color: '#1a1a1a', backgroundColor: '#ffffff' }}
-                                        />
-                                    ) : (
-                                        <button
-                                            onClick={() => { setPageInputValue(String(currentPreviewPage)); setEditingPageInput(true); }}
-                                            className="px-2 py-0.5 text-sm font-semibold text-gray-800 border border-gray-300 rounded hover:border-blue-400 hover:bg-blue-50 transition-colors cursor-text min-w-[36px]"
-                                            title="Click to type page number"
-                                        >
-                                            {currentPreviewPage}
-                                        </button>
-                                    )}
-                                    <span className="text-gray-500">of {totalPages}</span>
-                                </div>
-
-                                <button
-                                    onClick={() => goToPreviewPage(currentPreviewPage + 1)}
-                                    disabled={currentPreviewPage >= totalPages || loadingPreview}
-                                    className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                                >
-                                    <ChevronRight size={18} />
-                                </button>
-                            </div>
-                        </>
-                    ) : (
-                        /* Grid view — 5-column thumbnail grid */
-                        <>
-                            {loadingGrid && Object.keys(gridThumbnails).length === 0 ? (
-                                <div className="flex flex-col items-center justify-center py-12 gap-3">
-                                    <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                                    <span className="text-sm text-gray-400">Rendering thumbnails...</span>
-                                </div>
-                            ) : (
-                                <div style={{
-                                    display: 'grid',
-                                    gridTemplateColumns: 'repeat(5, 1fr)',
-                                    gap: '12px',
-                                }}>
+                        ) : (
+                            <div style={{
+                                flex: 1,
+                                minHeight: 0,
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(5, 1fr)',
+                                gridTemplateRows: 'repeat(2, 1fr)',
+                                gap: '12px',
+                            }}>
                                     {Array.from({ length: Math.min(GRID_PAGE_COUNT, totalPages - gridStartPage + 1) }, (_, i) => gridStartPage + i).map(p => {
                                         const isPageSelected = selectedPages.has(p);
                                         return (
@@ -973,23 +1045,31 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
                                                     cursor: 'pointer',
                                                     borderRadius: '8px',
                                                     overflow: 'hidden',
-                                                    border: isPageSelected ? '3px solid #3b82f6' : '2px solid #e5e7eb',
-                                                    background: '#f9fafb',
+                                                    border: isPageSelected ? '3px solid #3b82f6' : `2px solid ${ui.cellBorder}`,
+                                                    background: ui.cellBg,
                                                     transition: 'border-color 0.2s, transform 0.15s, box-shadow 0.2s',
                                                     position: 'relative',
-                                                    aspectRatio: '3/4',
+                                                    minHeight: 0,
                                                 }}
-                                                className="hover:border-blue-400 hover:scale-[1.03] hover:shadow-md"
+                                                className="group hover:border-blue-400 hover:shadow-md"
                                             >
+                                                {/* Zoom / preview this page (doesn't toggle selection) */}
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); previewPage(p); }}
+                                                    title="Preview page"
+                                                    className={`absolute top-1.5 left-1.5 z-10 w-5 h-5 rounded-full flex items-center justify-center border shadow-sm opacity-0 group-hover:opacity-100 hover:text-blue-500 hover:border-blue-400 transition-opacity ${isDark ? 'bg-gray-800/90 border-white/15 text-gray-200' : 'bg-white/90 border-gray-300 text-gray-600'}`}
+                                                >
+                                                    <ZoomIn size={11} />
+                                                </button>
                                                 {gridThumbnails[p] ? (
                                                     <img
                                                         src={gridThumbnails[p]}
                                                         alt={`Page ${p}`}
-                                                        style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#fff' }}
+                                                        style={{ width: '100%', height: '100%', objectFit: 'contain', background: isDark ? '#2b2f3a' : '#fff' }}
                                                     />
                                                 ) : (
                                                     <div className="w-full h-full flex items-center justify-center">
-                                                        <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                                                        <LogoSpinner className="w-8 h-8" />
                                                     </div>
                                                 )}
                                                 {/* Selection badge */}
@@ -1011,10 +1091,10 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
                                                     right: 0,
                                                     textAlign: 'center',
                                                     fontSize: '11px',
-                                                    color: isPageSelected ? '#2563eb' : '#6b7280',
+                                                    color: isPageSelected ? (isDark ? '#60a5fa' : '#2563eb') : ui.labelColor,
                                                     fontWeight: isPageSelected ? '600' : '400',
                                                     padding: '3px 0',
-                                                    background: 'rgba(255,255,255,0.85)',
+                                                    background: ui.labelBg,
                                                 }}>
                                                     {p}
                                                 </div>
@@ -1030,33 +1110,54 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
                                     <button
                                         onClick={() => setGridStartPage(Math.max(1, gridStartPage - GRID_PAGE_COUNT))}
                                         disabled={gridStartPage <= 1}
-                                        className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                        className={`w-8 h-8 flex items-center justify-center rounded-lg border disabled:opacity-30 disabled:cursor-not-allowed transition-colors ${ui.navBtn}`}
                                     >
                                         <ChevronLeft size={18} />
                                     </button>
-                                    <span className="text-sm text-gray-600">
+                                    <span className={`text-sm ${ui.body}`}>
                                         Pages {gridStartPage}–{Math.min(gridStartPage + GRID_PAGE_COUNT - 1, totalPages)} of {totalPages}
                                     </span>
                                     <button
                                         onClick={() => setGridStartPage(Math.min(gridStartPage + GRID_PAGE_COUNT, totalPages))}
                                         disabled={gridStartPage + GRID_PAGE_COUNT > totalPages}
-                                        className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                        className={`w-8 h-8 flex items-center justify-center rounded-lg border disabled:opacity-30 disabled:cursor-not-allowed transition-colors ${ui.navBtn}`}
                                     >
                                         <ChevronRight size={18} />
                                     </button>
+
+                                    {/* Jump to a specific page manually */}
+                                    <div className="flex items-center gap-1.5 ml-3 text-sm">
+                                        <span className={ui.sub}>Go to</span>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            max={totalPages}
+                                            value={gridJumpValue}
+                                            placeholder="#"
+                                            onChange={(e) => setGridJumpValue(e.target.value)}
+                                            onKeyDown={(e) => { if (e.key === 'Enter') jumpGridToPage(gridJumpValue); e.stopPropagation(); }}
+                                            className={`w-16 text-center text-sm border rounded px-1 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-300 ${ui.inputCls}`}
+                                            style={{ MozAppearance: 'textfield', ...ui.inputStyle }}
+                                        />
+                                        <button
+                                            onClick={() => jumpGridToPage(gridJumpValue)}
+                                            className="px-2.5 py-1 text-xs font-medium text-white bg-blue-500 rounded hover:bg-blue-600 transition-colors"
+                                        >
+                                            Go
+                                        </button>
+                                    </div>
                                 </div>
                             )}
-                        </>
-                    )}
+                    </div>
 
                     {/* Selection summary — always visible */}
-                    <div className="flex items-center justify-between mt-4 px-1">
-                        <span className="text-sm text-gray-600">
+                    <div className="flex items-center justify-between mt-4 px-1 relative" style={{ zIndex: 1 }}>
+                        <span className={`text-sm ${ui.body}`}>
                             {selectedPages.size === 0
                                 ? 'No pages selected'
                                 : `${selectedPages.size} page${selectedPages.size !== 1 ? 's' : ''} selected`}
                             {selectedPages.size > 0 && selectedPages.size <= 8 && (
-                                <span className="text-gray-400 ml-1">
+                                <span className={`ml-1 ${ui.sub}`}>
                                     ({[...selectedPages].sort((a, b) => a - b).join(', ')})
                                 </span>
                             )}
@@ -1069,10 +1170,10 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
                 </div>
 
                 {/* Footer */}
-                <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2 bg-gray-50">
+                <div className={`px-5 py-3 border-t flex justify-end gap-2 ${ui.head} ${ui.footer}`}>
                     <button
                         onClick={onClose}
-                        className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 rounded-lg hover:bg-gray-100 transition-colors"
+                        className={`px-4 py-2 text-sm rounded-lg transition-colors ${ui.cancel}`}
                     >
                         Cancel
                     </button>
@@ -1081,11 +1182,24 @@ function ExtractPagesModal({ node, onClose, addNode, stagePosition, stageScale }
                         disabled={selectedPages.size === 0 || loading}
                         className="px-4 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 font-medium transition-colors"
                     >
-                        {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+                        {loading && <LogoSpinner className="w-5 h-5" />}
                         Extract {selectedPages.size} page{selectedPages.size !== 1 ? 's' : ''}
                     </button>
                 </div>
             </div>
         </div>
+        {zoomPage != null && (
+            <PageZoomViewer
+                node={node}
+                pageNum={zoomPage}
+                totalPages={totalPages}
+                pdfBytesRef={pdfBytesRef}
+                selectedPages={selectedPages}
+                onToggleSelect={togglePage}
+                onExtract={extractPages}
+                onClose={() => setZoomPage(null)}
+            />
+        )}
+        </>
     );
 }

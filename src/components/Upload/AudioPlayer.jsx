@@ -1,5 +1,5 @@
 import { X, Pause, Play, Volume2, VolumeX } from 'lucide-react';
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState } from 'react';
 
 export default function AudioPlayer({ src, fileName, onClose }) {
     const audioRef = useRef(null);

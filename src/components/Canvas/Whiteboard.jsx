@@ -5,6 +5,194 @@ import useStore from '../../store/useStore';
 import PdfOverlay from './PdfOverlay';
 import ShapeToolbar from '../UI/ShapeToolbar';
 import FloatingTextToolbar from '../UI/FloatingTextToolbar';
+import LogoSpinner from '../UI/LogoSpinner';
+import { renumber, remapCaret, listEnter } from '../../utils/textListHelpers';
+import { nodeBaseAttrs, charAttrsFromSegments, sameAttrs } from '../../utils/richText';
+
+// Shared offscreen context for measuring run widths so multi-colour text lines
+// up exactly with how Konva renders each run (same canvas measureText).
+const _measureCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+const _measureCtx = _measureCanvas ? _measureCanvas.getContext('2d') : null;
+function measureRunWidth(str, fontStyle, fontSize, fontFamily) {
+    if (!_measureCtx) return str.length * fontSize * 0.5;
+    _measureCtx.font = `${fontStyle || 'normal'} normal ${fontSize}px ${fontFamily}`;
+    return _measureCtx.measureText(str).width;
+}
+
+// Sticky notes auto-shrink their text to fit the card. The editor textarea must
+// use the SAME size or its (invisible) caret drifts away from the rendered text
+// — most visibly with bullet/numbered lists, which produce many short lines.
+// Single source of truth, shared by the renderer and the edit overlay.
+function fitStickyFontSize(text, width, height, baseFontSize = 18) {
+    const pad = 14;
+    const maxW = width - pad * 2;
+    const maxH = height - pad * 2;
+    let size = baseFontSize || 18;
+    if (text && text.length > 0 && maxW > 0 && maxH > 0) {
+        for (let fs = size; fs >= 10; fs--) {
+            const charsPerLine = Math.max(1, Math.floor(maxW / (fs * 0.58)));
+            let lines = 0;
+            for (const para of text.split('\n')) lines += Math.max(1, Math.ceil(para.length / charsPerLine));
+            size = fs;
+            if (lines * fs * 1.3 <= maxH) break;
+        }
+    }
+    return size;
+}
+
+// Renders a text node whose characters carry different styles (colour, size,
+// font, weight, decoration) as a Group of per-run <Text> elements, laid out line
+// by line with per-line height and baseline alignment. Used when colorSegments
+// holds more than one run; otherwise the plain single <Text> is used.
+function RichTextNode({ node, commonProps }) {
+    const text = node.text || '';
+    const lineHeight = node.lineHeight || 1;
+    const base = nodeBaseAttrs(node);
+    const attrs = charAttrsFromSegments(node.colorSegments, text.length, base);
+    const lines = text.split('\n');
+
+    const elements = [];
+    let charIdx = 0;
+    let maxWidth = 0;
+    let yTop = 0;
+    let key = 0;
+    lines.forEach((line) => {
+        // Line height follows the largest glyph on the line.
+        let lineMax = base.fontSize;
+        for (let k = 0; k < line.length; k++) lineMax = Math.max(lineMax, attrs[charIdx + k].fontSize);
+        let x = 0;
+        let i = 0;
+        while (i < line.length) {
+            const a = attrs[charIdx + i];
+            let j = i + 1;
+            while (j < line.length && sameAttrs(attrs[charIdx + j], a)) j++;
+            const runText = line.slice(i, j);
+            const y = yTop + 0.8 * (lineMax - a.fontSize); // baseline-align smaller runs
+            elements.push(
+                <Text key={key++} x={x} y={y} text={runText}
+                    fontSize={a.fontSize} fontFamily={a.fontFamily} fontStyle={a.fontStyle}
+                    textDecoration={a.textDecoration} fill={a.fill} listening={false} />
+            );
+            x += measureRunWidth(runText, a.fontStyle, a.fontSize, a.fontFamily);
+            i = j;
+        }
+        if (x > maxWidth) maxWidth = x;
+        yTop += lineMax * lineHeight;
+        charIdx += line.length + 1; // +1 for the newline
+    });
+
+    return (
+        <Group {...commonProps} x={node.x} y={node.y} opacity={node.opacity ?? 1}>
+            {/* Transparent hit area so the node stays clickable/draggable. The
+                per-run <Text> elements are listening={false}, which would
+                otherwise leave the Group with no hit region. */}
+            <Rect x={0} y={0} width={Math.max(maxWidth, 1)} height={Math.max(yTop, 1)} fill="transparent" />
+            {elements}
+        </Group>
+    );
+}
+
+// Lay out wrapped, multi-colour text into positioned <Text> runs for sticky
+// notes. Honours hard newlines and greedy word-wrap at maxW; each run is
+// coloured from `colors` (per-character, indexed into the full text).
+// Word-wrap a sticky's text to the card width, rendering per-run <Text> with each
+// run's own colour/size/font/style so formatting can be applied to single words.
+// Each visual line's height follows its largest glyph; smaller runs are
+// baseline-aligned. `attrs` is the per-character attribute array.
+function wrappedRichRuns(text, attrs, baseSize, maxW) {
+    const els = [];
+    let y = 0;        // top of the current visual line
+    let key = 0;
+    let buf = [];     // runs queued for the current visual line: { text, attr, x }
+    let lineMax = 0;
+    let curX = 0;
+
+    const flush = () => {
+        const h = lineMax || baseSize;
+        for (const r of buf) {
+            const yy = y + 0.8 * (h - r.attr.fontSize); // baseline-align smaller runs
+            els.push(
+                <Text key={key++} x={r.x} y={yy} text={r.text}
+                    fontSize={r.attr.fontSize} fontFamily={r.attr.fontFamily}
+                    fontStyle={r.attr.fontStyle} textDecoration={r.attr.textDecoration}
+                    fill={r.attr.fill} listening={false} />
+            );
+        }
+        y += h;
+        buf = []; lineMax = 0; curX = 0;
+    };
+
+    const wordWidth = (word, startIdx) => {
+        let w = 0;
+        for (let k = 0; k < word.length; k++) {
+            const a = attrs[startIdx + k];
+            w += measureRunWidth(word[k], a.fontStyle, a.fontSize, a.fontFamily);
+        }
+        return w;
+    };
+
+    const pushWord = (word, startIdx) => {
+        let s = 0;
+        while (s < word.length) {
+            const a = attrs[startIdx + s];
+            let e = s + 1;
+            while (e < word.length && sameAttrs(attrs[startIdx + e], a)) e++;
+            const part = word.slice(s, e);
+            buf.push({ text: part, attr: a, x: curX });
+            curX += measureRunWidth(part, a.fontStyle, a.fontSize, a.fontFamily);
+            if (a.fontSize > lineMax) lineMax = a.fontSize;
+            s = e;
+        }
+    };
+
+    // Break a word that is wider than the whole card across multiple lines so
+    // very large words don't overflow the sticky.
+    const placeChars = (str, startIdx) => {
+        for (let k = 0; k < str.length; k++) {
+            const a = attrs[startIdx + k];
+            const cw = measureRunWidth(str[k], a.fontStyle, a.fontSize, a.fontFamily);
+            if (curX > 0 && curX + cw > maxW) flush();
+            const last = buf.length ? buf[buf.length - 1] : null;
+            if (last && sameAttrs(last.attr, a)) last.text += str[k];
+            else buf.push({ text: str[k], attr: a, x: curX });
+            curX += cw;
+            if (a.fontSize > lineMax) lineMax = a.fontSize;
+        }
+    };
+
+    let gi = 0; // absolute char index into `text` (including newlines)
+    text.split('\n').forEach((line) => {
+        const tokens = line.split(' ');
+        let idx = gi;
+        for (let t = 0; t < tokens.length; t++) {
+            const word = tokens[t] + (t < tokens.length - 1 ? ' ' : '');
+            const bareW = wordWidth(tokens[t], idx);
+            if (curX > 0 && curX + bareW > maxW) flush();
+            if (bareW > maxW) placeChars(word, idx);
+            else pushWord(word, idx);
+            idx += word.length;
+        }
+        gi = idx + 1; // skip the newline
+        flush();      // hard newline ends the visual line
+    });
+    return els;
+}
+
+// Editor input handler shared by both text editors: renumber numbered lines
+// (keeping the caret), push the text to the visible node live so colour/list/
+// typing render immediately, then resize the editor.
+function syncLiveText(textarea, nodeId, autoExpand) {
+    const before = textarea.value;
+    const after = renumber(before);
+    if (after !== before) {
+        const pos = textarea.selectionStart;
+        textarea.value = after;
+        const np = remapCaret(before, pos, after);
+        textarea.selectionStart = textarea.selectionEnd = np;
+    }
+    useStore.getState().updateNodeTransient(nodeId, { text: textarea.value });
+    autoExpand();
+}
 
 function useImage(src) {
     const [image, setImage] = useState(null);
@@ -59,24 +247,30 @@ function AudioNode({ node, commonProps }) {
     const w = node.width || 300;
     const h = node.height || 80;
     const fileName = node.fileName || 'Audio file';
-
-    // Proportional sizing — everything scales with node dimensions
-    const iconRadius = Math.min(w * 0.1, h * 0.35);
-    const iconCx = w * 0.13;
-    const iconCy = h / 2;
-    const noteFs = Math.max(10, iconRadius * 1.2);
-    const textX = iconCx + iconRadius + Math.max(8, w * 0.03);
-    const nameFs = Math.max(10, Math.min(16, h * 0.18, w * 0.045));
-    const hintFs = Math.max(8, Math.min(12, h * 0.14, w * 0.035));
-    const maxNameLen = Math.max(10, Math.floor((w - textX - 10) / (nameFs * 0.55)));
-    const displayName = fileName.length > maxNameLen ? fileName.substring(0, maxNameLen - 2) + '...' : fileName;
-    const cornerR = Math.min(12, w * 0.04, h * 0.15);
-    // Center text block vertically
-    const textBlockH = nameFs + hintFs + 6;
-    const textStartY = (h - textBlockH) / 2;
-
-    // If audio is currently playing, show a playing indicator
     const isPlaying = node.playing;
+    const hintText = isPlaying ? '🔊 Playing... double-click to stop' : '🎧 Double-click to play';
+
+    // Everything scales with the box. The note icon and paddings track height,
+    // and the text grows with height too — but is also clamped to the available
+    // width so the whole label stays inside the card when the node is upscaled.
+    const pad = h * 0.14;
+    const iconRadius = h * 0.3;
+    const iconCx = pad + iconRadius;
+    const iconCy = h / 2;
+    const noteFs = iconRadius * 1.1;
+    const textX = iconCx + iconRadius + pad;
+    const availW = Math.max(20, w - textX - pad);
+
+    const nameFs = Math.max(9, Math.min(h * 0.27, availW / Math.max(6, fileName.length * 0.55)));
+    const hintFs = Math.max(8, Math.min(h * 0.19, nameFs * 0.72, availW / Math.max(10, hintText.length * 0.5)));
+
+    const maxNameLen = Math.max(4, Math.floor(availW / (nameFs * 0.55)));
+    const displayName = fileName.length > maxNameLen ? fileName.slice(0, maxNameLen - 1) + '…' : fileName;
+
+    const cornerR = Math.min(16, h * 0.18);
+    const gap = h * 0.06;
+    const textBlockH = nameFs + gap + hintFs;
+    const textStartY = (h - textBlockH) / 2;
 
     return (
         <Group {...commonProps} x={node.x} y={node.y}>
@@ -87,13 +281,13 @@ function AudioNode({ node, commonProps }) {
             <Circle listening={false} x={iconCx} y={iconCy} radius={iconRadius} fill="#8b5cf6" />
 
             {/* Music note icon */}
-            <Text listening={false} x={iconCx - noteFs * 0.4} y={iconCy - noteFs * 0.5} text={isPlaying ? '▶' : '♪'} fontSize={noteFs} fill="white" />
+            <Text listening={false} x={iconCx - noteFs * 0.4} y={iconCy - noteFs * 0.55} text={isPlaying ? '▶' : '♪'} fontSize={noteFs} fill="white" />
 
             {/* File name */}
-            <Text listening={false} x={textX} y={textStartY} text={displayName} fontSize={nameFs} fill="#1f2937" fontStyle="bold" width={w - textX - 10} />
+            <Text listening={false} x={textX} y={textStartY} text={displayName} fontSize={nameFs} fill="#1f2937" fontStyle="bold" width={availW} wrap="none" ellipsis />
 
             {/* Double-click hint */}
-            <Text listening={false} x={textX} y={textStartY + nameFs + 6} text={isPlaying ? '🔊 Playing... double-click to stop' : '🎧 Double-click to play'} fontSize={hintFs} fill={isPlaying ? '#8b5cf6' : '#6b7280'} width={w - textX - 10} />
+            <Text listening={false} x={textX} y={textStartY + nameFs + gap} text={hintText} fontSize={hintFs} fill={isPlaying ? '#8b5cf6' : '#6b7280'} width={availW} wrap="none" ellipsis />
         </Group>
     );
 }
@@ -150,7 +344,7 @@ function PdfDocumentNode({ node, commonProps }) {
         const recover = async () => {
             try {
                 const { loadMediaFromDB } = await import('../../store/useStore');
-                const { renderPdfPage, base64ToBytes } = await import('../Upload/PdfUploader');
+                const { renderPdfPage, base64ToBytes } = await import('../../utils/pdfHelpers');
                 const pdfBase64 = await loadMediaFromDB(`${node.id}_pdf`);
                 if (!pdfBase64 || cancelled) return;
                 const bytes = base64ToBytes(pdfBase64);
@@ -198,42 +392,24 @@ export default function Whiteboard() {
     const lastPointer = useRef({ x: 0, y: 0 }); // Last pointer position for panning
     const dragStartPositions = useRef({}); // Track initial positions for multi-drag
     const editingTextIdRef = useRef(null);
+    // Reactive id of the node currently being edited, so its empty-state
+    // placeholder can be hidden (the editor's own placeholder shows instead).
+    const [editingNodeId, setEditingNodeId] = useState(null);
+    // The node stays VISIBLE while editing — a transparent textarea sits on top
+    // and the node's text is live-synced — so text, colour and list changes show
+    // immediately, and the text never vanishes when the editor closes. We only
+    // drop the transformer to avoid a double selection border during editing.
     const hideEditingTextNode = useCallback((nodeId) => {
         editingTextIdRef.current = nodeId;
-        if (nodeId && layerRef.current) {
-            const konvaNode = layerRef.current.findOne(`#${nodeId}`);
-            if (konvaNode) {
-                // For sticky notes (Group), hide only the Text child to keep the background visible
-                if (konvaNode.getClassName() === 'Group') {
-                    const textChild = konvaNode.findOne('Text');
-                    if (textChild) { textChild.hide(); layerRef.current.batchDraw(); }
-                } else {
-                    konvaNode.hide();
-                    layerRef.current.batchDraw();
-                }
-            }
-            // Clear transformer to prevent double-border during editing
-            if (transformerRef.current) {
-                transformerRef.current.nodes([]);
-                transformerRef.current.getLayer()?.batchDraw();
-            }
+        setEditingNodeId(nodeId);
+        if (transformerRef.current) {
+            transformerRef.current.nodes([]);
+            transformerRef.current.getLayer()?.batchDraw();
         }
     }, []);
     const showEditingTextNode = useCallback(() => {
-        const nodeId = editingTextIdRef.current;
-        if (nodeId && layerRef.current) {
-            const konvaNode = layerRef.current.findOne(`#${nodeId}`);
-            if (konvaNode) {
-                if (konvaNode.getClassName() === 'Group') {
-                    const textChild = konvaNode.findOne('Text');
-                    if (textChild) { textChild.show(); layerRef.current.batchDraw(); }
-                } else {
-                    konvaNode.show();
-                    layerRef.current.batchDraw();
-                }
-            }
-        }
         editingTextIdRef.current = null;
+        setEditingNodeId(null);
     }, []);
     const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
     const [drawingShape, setDrawingShape] = useState(null);
@@ -244,12 +420,12 @@ export default function Whiteboard() {
 
     const {
         nodes, selectedNodeIds, tool, shapeType, stagePosition, stageScale,
-        fillColor, strokeColor, penStrokeWidth, highlighterStrokeWidth, objectStrokeWidth, textColor, highlighterColor,
+        fillColor, strokeColor, penStrokeWidth, highlighterStrokeWidth, laserStrokeWidth, objectStrokeWidth, textColor, highlighterColor,
         cornerRadius: storeCornerRadius,
         addNode, updateNode, deleteNode, selectNode, clearSelection, setStagePosition, setStageScale,
-        showContextMenu, hideContextMenu,
-        comments, addComment,
-        theme,
+        beginStrokeNode, updateNodeTransient, commitTransient,
+        showContextMenu,
+        addComment,
     } = useStore();
 
     useEffect(() => {
@@ -260,7 +436,13 @@ export default function Whiteboard() {
 
     useEffect(() => {
         if (transformerRef.current && layerRef.current) {
-            const selected = selectedNodeIds.map((id) => layerRef.current.findOne(`#${id}`)).filter(Boolean);
+            // Exclude the node currently being edited so its transform handles don't
+            // show over the live text editor (the node stays visible while editing).
+            const editingId = editingTextIdRef.current;
+            const selected = selectedNodeIds
+                .filter((id) => id !== editingId)
+                .map((id) => layerRef.current.findOne(`#${id}`))
+                .filter(Boolean);
             transformerRef.current.nodes(selected);
             transformerRef.current.getLayer()?.batchDraw();
         }
@@ -313,13 +495,13 @@ export default function Whiteboard() {
 
         if (tool === 'pen') {
             isDrawing.current = true;
-            currentLineId.current = addNode({ type: 'line', points: [pos.x, pos.y], stroke: strokeColor, strokeWidth: penStrokeWidth, lineCap: 'round', lineJoin: 'round' });
+            currentLineId.current = beginStrokeNode({ type: 'line', points: [pos.x, pos.y], stroke: strokeColor, strokeWidth: penStrokeWidth, lineCap: 'round', lineJoin: 'round' });
             return;
         }
 
         if (tool === 'highlighter') {
             isDrawing.current = true;
-            currentLineId.current = addNode({ type: 'highlight', points: [pos.x, pos.y], stroke: highlighterColor, strokeWidth: highlighterStrokeWidth, opacity: 0.4, lineCap: 'round', lineJoin: 'round' });
+            currentLineId.current = beginStrokeNode({ type: 'highlight', points: [pos.x, pos.y], stroke: highlighterColor, strokeWidth: highlighterStrokeWidth, opacity: 0.4, lineCap: 'round', lineJoin: 'round' });
             return;
         }
 
@@ -389,6 +571,8 @@ export default function Whiteboard() {
             const textFontFamily = useStore.getState().textFontFamily || 'Arial';
             const textFontSizeVal = useStore.getState().textFontSize || 24;
             const newNodeId = addNode({ type: 'text', x: pos.x, y: pos.y, text: '', fontSize: textFontSizeVal, fill: textColor, fontFamily: textFontFamily });
+            // Switch to select so clicking away commits this node instead of spawning another
+            useStore.getState().setTool('select');
             // Select the node so FloatingTextToolbar renders, then open textarea for editing
             setTimeout(() => {
                 selectNode(newNodeId);
@@ -420,11 +604,12 @@ export default function Whiteboard() {
                         font-size: ${currentFontSz * stageScale}px;
                         border: 2px solid #0ea5e9;
                         padding: 2px 4px;
-                        background: rgba(255,255,255,0.95);
-                        color: ${textColor};
+                        background: transparent;
+                        color: transparent;
+                        caret-color: ${textColor};
                         outline: none;
                         resize: none;
-                        line-height: 1.3;
+                        line-height: 1;
                         font-family: '${currentFontFam}', sans-serif;
                         z-index: 1000;
                         border-radius: 2px;
@@ -436,26 +621,18 @@ export default function Whiteboard() {
                     `;
                     textarea.style.setProperty('-webkit-scrollbar', 'none');
 
-                    // Style sync from FloatingTextToolbar — keeps textarea in sync with node style changes
-                    let prevListType = null;
+                    // Keep the textarea's font metrics in sync with toolbar style
+                    // changes so the (invisible) caret stays aligned with the live
+                    // Konva text rendered underneath.
                     const unsubStyleSync = useStore.subscribe((state) => {
                         const updatedNode = state.nodes.find(n => n.id === newNodeId);
                         if (!updatedNode || textareaRemoved) return;
                         const fs = updatedNode.fontStyle || 'normal';
                         textarea.style.fontWeight = fs.includes('bold') ? 'bold' : 'normal';
                         textarea.style.fontStyle = fs.includes('italic') ? 'italic' : 'normal';
-                        textarea.style.textDecoration = updatedNode.textDecoration === 'underline' ? 'underline' : updatedNode.textDecoration === 'line-through' ? 'line-through' : 'none';
                         textarea.style.fontFamily = `'${updatedNode.fontFamily || 'Arial'}', sans-serif`;
                         textarea.style.fontSize = `${(updatedNode.fontSize || 24) * stageScale}px`;
-                        textarea.style.color = updatedNode.fill || '#000000';
-                        // Force-sync textarea content when list type changes
-                        const curListType = updatedNode.listType || null;
-                        if (curListType !== prevListType) {
-                            prevListType = curListType;
-                            textarea.value = updatedNode.text || '';
-                            textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
-                            autoExpand();
-                        }
+                        textarea.style.caretColor = updatedNode.fill || '#000000';
                         autoExpand();
                     });
 
@@ -478,7 +655,7 @@ export default function Whiteboard() {
                         textarea.style.height = 'auto';
                         textarea.style.height = `${textarea.scrollHeight}px`;
                     };
-                    textarea.addEventListener('input', autoExpand);
+                    textarea.addEventListener('input', () => syncLiveText(textarea, newNodeId, autoExpand));
                     autoExpand();
                     textarea.focus();
 
@@ -489,7 +666,7 @@ export default function Whiteboard() {
                         unsubStyleSync(); // Stop watching for style changes
                         if (save && textarea.value.trim()) {
                             updateNode(newNodeId, { text: textarea.value });
-                        } else if (!save || !textarea.value.trim()) {
+                        } else {
                             deleteNode(newNodeId);
                         }
                         textarea.remove();
@@ -515,14 +692,24 @@ export default function Whiteboard() {
                         }, 150);
                     });
                     textarea.addEventListener('keydown', (e) => {
-                        if (e.key === 'Enter' && (e.ctrlKey || e.shiftKey)) { e.preventDefault(); removeTextarea(true); }
+                        if (e.key === 'Enter' && (e.ctrlKey || e.shiftKey)) { e.preventDefault(); removeTextarea(true); return; }
+                        if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
+                            const res = listEnter(textarea.value, textarea.selectionStart);
+                            if (res) {
+                                e.preventDefault();
+                                textarea.value = res.text;
+                                textarea.selectionStart = textarea.selectionEnd = res.caret;
+                                syncLiveText(textarea, newNodeId, autoExpand);
+                                return;
+                            }
+                        }
                         if (e.key === 'Escape') { e.preventDefault(); removeTextarea(false); }
                     });
                 }
             }, 50);
             return;
         }
-    }, [tool, shapeType, fillColor, strokeColor, penStrokeWidth, highlighterStrokeWidth, objectStrokeWidth, highlighterColor, addNode, updateNode, deleteNode, clearSelection, selectNode, getPos, nodes, stageScale, textColor, hideEditingTextNode, showEditingTextNode]);
+    }, [tool, shapeType, strokeColor, penStrokeWidth, highlighterStrokeWidth, highlighterColor, addNode, beginStrokeNode, updateNode, deleteNode, clearSelection, selectNode, getPos, nodes, stageScale, textColor, hideEditingTextNode, showEditingTextNode]);
 
     const handleMouseMove = useCallback((e) => {
         // Manual panning — move the stage position by the mouse delta (middle button)
@@ -559,7 +746,8 @@ export default function Whiteboard() {
 
         if (isDrawing.current && (tool === 'pen' || tool === 'highlighter') && currentLineId.current) {
             const node = nodes.find(n => n.id === currentLineId.current);
-            if (node) updateNode(currentLineId.current, { points: [...node.points, pos.x, pos.y] });
+            // Transient update — history/save happen once on mouseup
+            if (node) updateNodeTransient(currentLineId.current, { points: [...node.points, pos.x, pos.y] });
             return;
         }
 
@@ -583,7 +771,7 @@ export default function Whiteboard() {
                 }
             }
         }
-    }, [tool, nodes, updateNode, deleteNode, getPos, drawingShape, selectionRect, setStagePosition]);
+    }, [tool, nodes, updateNodeTransient, deleteNode, getPos, drawingShape, selectionRect, setStagePosition]);
 
     // Helper to compute bounding box for any node type
     const getNodeBounds = useCallback((node) => {
@@ -623,7 +811,8 @@ export default function Whiteboard() {
                 minY = Math.min(minY, pts[i + 1]);
                 maxY = Math.max(maxY, pts[i + 1]);
             }
-            return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+            // Points are relative to the node's x/y offset (set when the line is dragged)
+            return { x: minX + (node.x || 0), y: minY + (node.y || 0), width: maxX - minX, height: maxY - minY };
         }
         return { x: node.x || 0, y: node.y || 0, width: node.width || 50, height: node.height || 50 };
     }, []);
@@ -721,6 +910,20 @@ export default function Whiteboard() {
                     case 'cross':
                         addNode({ type: 'cross', x: centerX, y: centerY, size: size, ...baseProps });
                         break;
+                    case 'doubleArrow':
+                        addNode({ type: 'arrow', points: [startX, startY, currentX, currentY], ...baseProps, pointerLength: 15, pointerWidth: 15, doubleArrow: true });
+                        break;
+                    case 'dashedLine':
+                        addNode({ type: 'simpleLine', points: [startX, startY, currentX, currentY], ...baseProps, dash: [12, 8] });
+                        break;
+                    case 'dottedLine':
+                        addNode({ type: 'simpleLine', points: [startX, startY, currentX, currentY], ...baseProps, dash: [2, 10] });
+                        break;
+                    case 'parallelogram':
+                    case 'trapezoid':
+                    case 'rightTriangle':
+                        addNode({ type, x: centerX, y: centerY, width: Math.max(20, width), height: Math.max(20, height), ...baseProps });
+                        break;
                     case 'frame':
                         addNode({ type: 'frame', x, y, width: Math.max(60, width), height: Math.max(60, height), label: 'Frame', stroke: '#6366f1', strokeWidth: 2 });
                         break;
@@ -744,10 +947,15 @@ export default function Whiteboard() {
             }, 100);
         }
 
+        // Commit a finished pen/highlighter stroke as a single history/save step
+        if (currentLineId.current) {
+            commitTransient();
+        }
+
         isDrawing.current = false;
         currentLineId.current = null;
         isPanning.current = false;
-    }, [drawingShape, selectionRect, nodes, getNodeBounds, selectNode, addNode, fillColor, strokeColor, objectStrokeWidth, storeCornerRadius, tool]);
+    }, [drawingShape, selectionRect, nodes, getNodeBounds, selectNode, addNode, commitTransient, fillColor, strokeColor, objectStrokeWidth, storeCornerRadius, tool]);
 
     const handleClick = useCallback((e, id) => {
         // Only respond to left mouse button
@@ -802,7 +1010,7 @@ export default function Whiteboard() {
         const textPosition = textNode.absolutePosition();
         const areaPosition = { x: stage.container().offsetLeft + textPosition.x, y: stage.container().offsetTop + textPosition.y };
 
-        // Hide the Konva text node BEFORE creating the textarea to prevent double-layer overlay
+        // Mark this node as being edited (it stays visible and is live-synced)
         hideEditingTextNode(node.id);
 
         // Create textarea - expands horizontally
@@ -833,10 +1041,11 @@ export default function Whiteboard() {
             border: 2px solid #0ea5e9;
             padding: 2px 4px;
             background: transparent;
-            color: ${_color};
+            color: transparent;
+            caret-color: ${_color};
             outline: none;
             resize: none;
-            line-height: 1.3;
+            line-height: 1;
             font-family: '${_ff}', sans-serif;
             z-index: 1000;
             border-radius: 2px;
@@ -861,27 +1070,17 @@ export default function Whiteboard() {
         }
         textarea.style.setProperty('-webkit-scrollbar', 'none');
 
-        // Watch for node style changes from FloatingTextToolbar and sync to textarea
-        let prevListType = node.listType || null;
+        // Keep the textarea's font metrics in sync with toolbar style changes so
+        // the (invisible) caret stays aligned with the live Konva text underneath.
         const unsubStyleSync = useStore.subscribe((state) => {
             const updatedNode = state.nodes.find(n => n.id === node.id);
             if (!updatedNode || textareaRemoved) return;
             const fs = updatedNode.fontStyle || 'normal';
             textarea.style.fontWeight = fs.includes('bold') ? 'bold' : 'normal';
             textarea.style.fontStyle = fs.includes('italic') ? 'italic' : 'normal';
-            textarea.style.textDecoration = updatedNode.textDecoration === 'underline' ? 'underline' : updatedNode.textDecoration === 'line-through' ? 'line-through' : 'none';
             textarea.style.fontFamily = `'${updatedNode.fontFamily || 'Arial'}', sans-serif`;
             textarea.style.fontSize = `${(updatedNode.fontSize || 24) * stageScale}px`;
-            const clr = updatedNode.type === 'sticky' ? (updatedNode.textColor || '#1a1a1a') : (updatedNode.fill || '#000000');
-            textarea.style.color = clr;
-            // Force-sync textarea content when list type changes
-            const curListType = updatedNode.listType || null;
-            if (curListType !== prevListType) {
-                prevListType = curListType;
-                textarea.value = updatedNode.text || '';
-                textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
-            }
-            // Re-expand after any style change (font size/family affect width)
+            textarea.style.caretColor = updatedNode.type === 'sticky' ? (updatedNode.textColor || '#1a1a1a') : (updatedNode.fill || '#000000');
             autoExpand();
         });
         let textareaRemoved = false;
@@ -889,6 +1088,12 @@ export default function Whiteboard() {
         // Auto-expand width and height as user types
         // Reads current styles from textarea.style so it picks up live changes from FloatingTextToolbar
         const autoExpand = () => {
+            // Stickies shrink their text to fit the card; mirror that here so the
+            // caret tracks the rendered text as list lines pile up.
+            if (node.type === 'sticky') {
+                const fitted = fitStickyFontSize(textarea.value, node.width, node.height, node.fontSize || 18);
+                textarea.style.fontSize = `${fitted * stageScale}px`;
+            }
             const currentFontSize = textarea.style.fontSize || `${_fs * stageScale}px`;
             const currentFontFamily = textarea.style.fontFamily || `'${_ff}', sans-serif`;
             const currentFontWeight = textarea.style.fontWeight || 'normal';
@@ -915,7 +1120,7 @@ export default function Whiteboard() {
             textarea.style.height = 'auto';
             textarea.style.height = `${textarea.scrollHeight}px`;
         };
-        textarea.addEventListener('input', autoExpand);
+        textarea.addEventListener('input', () => syncLiveText(textarea, node.id, autoExpand));
         autoExpand();
         textarea.focus();
         textarea.select();
@@ -924,21 +1129,9 @@ export default function Whiteboard() {
             if (textareaRemoved) return;
             textareaRemoved = true;
             unsubStyleSync(); // Stop watching for style changes
-            if (save) {
-                const finalText = textarea.value;
-                // If user manually removed all list prefixes, clear listType
-                const currentNode = useStore.getState().nodes.find(n => n.id === node.id);
-                const nodeListType = currentNode?.listType;
-                let updates = { text: finalText };
-                if (nodeListType) {
-                    const lines = finalText.split('\n').filter(l => l.trim());
-                    const hasPrefixes = lines.length > 0 && lines.every(l => /^(•\s|\d+\.\s)/.test(l));
-                    if (!hasPrefixes) {
-                        updates.listType = null;
-                    }
-                }
-                updateNode(node.id, updates);
-            }
+            // Commit the final text, or revert to the original on Escape. The node
+            // stayed visible and live-synced throughout, so this records one entry.
+            updateNode(node.id, { text: save ? textarea.value : node.text });
             textarea.remove();
             showEditingTextNode();
         };
@@ -960,7 +1153,17 @@ export default function Whiteboard() {
             }, 150);
         });
         textarea.addEventListener('keydown', (e) => {
-            if ((e.key === 'Enter' && (e.ctrlKey || e.shiftKey))) { e.preventDefault(); removeTextarea(true); }
+            if ((e.key === 'Enter' && (e.ctrlKey || e.shiftKey))) { e.preventDefault(); removeTextarea(true); return; }
+            if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
+                const res = listEnter(textarea.value, textarea.selectionStart);
+                if (res) {
+                    e.preventDefault();
+                    textarea.value = res.text;
+                    textarea.selectionStart = textarea.selectionEnd = res.caret;
+                    syncLiveText(textarea, node.id, autoExpand);
+                    return;
+                }
+            }
             if (e.key === 'Escape') { e.preventDefault(); removeTextarea(false); }
         });
     }, [updateNode, stageScale, hideEditingTextNode, showEditingTextNode]);
@@ -988,7 +1191,7 @@ export default function Whiteboard() {
         const sx = n.scaleX(), sy = n.scaleY();
         n.scaleX(1); n.scaleY(1);
 
-        if (['rectangle', 'roundedRect', 'image', 'youtube', 'diamond', 'audio', 'video', 'pdf', 'cloud', 'rhombus', 'heart'].includes(type)) {
+        if (['rectangle', 'roundedRect', 'image', 'youtube', 'diamond', 'audio', 'video', 'pdf', 'cloud', 'rhombus', 'heart', 'parallelogram', 'trapezoid', 'rightTriangle'].includes(type)) {
             const nodeData = nodes.find(nd => nd.id === id);
             const origW = nodeData ? (nodeData.width || nodeData.size || 300) : (n.width() || 300);
             const origH = nodeData ? (nodeData.height || nodeData.size || 80) : (n.height() || 80);
@@ -1004,7 +1207,10 @@ export default function Whiteboard() {
             const origSize = nodeData?.size || 100;
             updateNode(id, { x: n.x(), y: n.y(), size: Math.max(20, origSize * Math.max(sx, sy)) });
         } else if (type === 'text') {
-            updateNode(id, { x: n.x(), y: n.y(), fontSize: Math.max(8, Math.round(n.fontSize() * sy)) });
+            // n may be a Group (multi-colour rich text) with no fontSize(); read from store
+            const nodeData = nodes.find(nd => nd.id === id);
+            const baseFs = nodeData?.fontSize || (typeof n.fontSize === 'function' ? n.fontSize() : 24);
+            updateNode(id, { x: n.x(), y: n.y(), fontSize: Math.max(8, Math.round(baseFs * sy)) });
         } else if (type === 'sticky') {
             const nodeData = nodes.find(nd => nd.id === id);
             const origW = nodeData?.width || 150;
@@ -1069,7 +1275,7 @@ export default function Whiteboard() {
                     }
                 }
             },
-            onDragStart: (e) => {
+            onDragStart: () => {
                 // Record starting positions of ALL selected nodes for group drag
                 if (selectedNodeIds.length > 1 && selectedNodeIds.includes(node.id)) {
                     const layer = layerRef.current;
@@ -1126,12 +1332,25 @@ export default function Whiteboard() {
             case 'star':
                 return <KonvaStar {...props} x={node.x} y={node.y} numPoints={node.numPoints || 5} innerRadius={node.innerRadius} outerRadius={node.outerRadius} fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} />;
             case 'arrow':
-                return <Arrow {...props} points={node.points} fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} pointerLength={node.pointerLength} pointerWidth={node.pointerWidth} />;
+                return <Arrow {...props} x={node.x || 0} y={node.y || 0} points={node.points} fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} hitStrokeWidth={Math.max(20, (node.strokeWidth || 2) * 2)} pointerLength={node.pointerLength} pointerWidth={node.pointerWidth} pointerAtBeginning={!!node.doubleArrow} dash={node.dash} />;
             case 'simpleLine':
-                return <Line {...props} points={node.points} stroke={node.stroke} strokeWidth={node.strokeWidth} lineCap="round" />;
-            case 'diamond':
+                return <Line {...props} x={node.x || 0} y={node.y || 0} points={node.points} stroke={node.stroke} strokeWidth={node.strokeWidth} hitStrokeWidth={Math.max(20, node.strokeWidth * 2)} lineCap="round" dash={node.dash} />;
+            case 'parallelogram': {
+                const w = node.width, h = node.height, s = w * 0.25;
+                return <Line {...props} x={node.x} y={node.y} points={[-w / 2 + s, -h / 2, w / 2, -h / 2, w / 2 - s, h / 2, -w / 2, h / 2]} closed fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} />;
+            }
+            case 'trapezoid': {
+                const w = node.width, h = node.height, s = w * 0.2;
+                return <Line {...props} x={node.x} y={node.y} points={[-w / 2 + s, -h / 2, w / 2 - s, -h / 2, w / 2, h / 2, -w / 2, h / 2]} closed fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} />;
+            }
+            case 'rightTriangle': {
+                const w = node.width, h = node.height;
+                return <Line {...props} x={node.x} y={node.y} points={[-w / 2, -h / 2, -w / 2, h / 2, w / 2, h / 2]} closed fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} />;
+            }
+            case 'diamond': {
                 const hw = node.width / 2, hh = node.height / 2;
                 return <Line {...props} x={node.x} y={node.y} points={[0, -hh, hw, 0, 0, hh, -hw, 0]} closed fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} />;
+            }
             case 'pentagon':
                 return <RegularPolygon {...props} x={node.x} y={node.y} sides={5} radius={node.radius} fill={node.fill} stroke={node.stroke} strokeWidth={node.strokeWidth} />;
             case 'hexagon':
@@ -1211,7 +1430,7 @@ export default function Whiteboard() {
                         strokeWidth={node.strokeWidth}
                     />
                 );
-            case 'cross':
+            case 'cross': {
                 const cs = node.size / 2;
                 const cw = cs * 0.35;
                 return (
@@ -1226,9 +1445,14 @@ export default function Whiteboard() {
                         strokeWidth={node.strokeWidth}
                     />
                 );
+            }
             case 'text': {
                 const textOpacity = node.opacity ?? 1;
                 const textListening = props.listening;
+                // Multi-colour text renders as a group of per-run Text elements
+                if (node.colorSegments && node.colorSegments.length > 1 && !node.textHighlight) {
+                    return <RichTextNode key={node.id} node={node} commonProps={props} />;
+                }
                 if (node.textHighlight) {
                     return (
                         <Group {...props} listening={textListening}>
@@ -1275,9 +1499,9 @@ export default function Whiteboard() {
                 );
             }
             case 'line':
-                return <Line {...props} points={node.points} stroke={node.stroke} strokeWidth={node.strokeWidth} hitStrokeWidth={Math.max(20, node.strokeWidth * 2)} lineCap="round" lineJoin="round" tension={0.5} />;
+                return <Line {...props} x={node.x || 0} y={node.y || 0} points={node.points} stroke={node.stroke} strokeWidth={node.strokeWidth} hitStrokeWidth={Math.max(20, node.strokeWidth * 2)} lineCap="round" lineJoin="round" tension={0.5} />;
             case 'highlight':
-                return <Line {...props} points={node.points} stroke={node.stroke} strokeWidth={node.strokeWidth} hitStrokeWidth={Math.max(30, node.strokeWidth * 2)} lineCap="round" lineJoin="round" tension={0.5} opacity={node.opacity || 0.4} />;
+                return <Line {...props} x={node.x || 0} y={node.y || 0} points={node.points} stroke={node.stroke} strokeWidth={node.strokeWidth} hitStrokeWidth={Math.max(30, node.strokeWidth * 2)} lineCap="round" lineJoin="round" tension={0.5} opacity={node.opacity || 0.4} />;
             case 'image':
                 return <ImageNode key={node.id} node={node} commonProps={props} />;
             case 'youtube':
@@ -1293,24 +1517,9 @@ export default function Whiteboard() {
                 const pad = 14;
                 const maxW = node.width - pad * 2;
                 const maxH = node.height - pad * 2;
-                // Start with base font size and scale down only if needed
-                let stickyFontSize = node.fontSize || 18;
-                if (stickyText.length > 0 && maxW > 0 && maxH > 0) {
-                    // Iterative fit: reduce font until text fits
-                    for (let fs = stickyFontSize; fs >= 12; fs--) {
-                        const avgCharW = fs * 0.58;
-                        const charsPerLine = Math.floor(maxW / avgCharW);
-                        if (charsPerLine < 1) continue;
-                        const words = stickyText.split(/\s+/);
-                        let lines = 1, lineLen = 0;
-                        for (const w of words) {
-                            if (lineLen + w.length > charsPerLine && lineLen > 0) { lines++; lineLen = w.length; }
-                            else { lineLen += (lineLen > 0 ? 1 : 0) + w.length; }
-                        }
-                        if (lines * fs * 1.3 <= maxH) { stickyFontSize = fs; break; }
-                        stickyFontSize = fs;
-                    }
-                }
+                // Shrink the font (same calc as the edit overlay) so long /
+                // list-heavy notes stay inside the card.
+                const stickyFontSize = fitStickyFontSize(stickyText, node.width, node.height, node.fontSize || 18);
                 return (
                     <Group {...props} x={node.x} y={node.y}>
                         <Rect
@@ -1335,21 +1544,32 @@ export default function Whiteboard() {
                             }}
                             fill="rgba(0,0,0,0.06)"
                         />
-                        <Text
-                            text={stickyText || 'Double-click to edit'}
-                            width={maxW}
-                            height={maxH}
-                            x={pad}
-                            y={pad}
-                            fontSize={stickyFontSize}
-                            fill={stickyText ? (node.textColor || '#1a1a1a') : '#aaa'}
-                            fontFamily={node.fontFamily || 'Arial'}
-                            fontStyle={node.fontStyle || 'normal'}
-                            textDecoration={node.textDecoration || 'none'}
-                            wrap="word"
-                            align={node.align || 'left'}
-                            verticalAlign="top"
-                        />
+                        {stickyText && node.colorSegments && node.colorSegments.length > 1 ? (
+                            <Group x={pad} y={pad}>
+                                {wrappedRichRuns(
+                                    stickyText,
+                                    charAttrsFromSegments(node.colorSegments, stickyText.length, nodeBaseAttrs(node)),
+                                    nodeBaseAttrs(node).fontSize,
+                                    maxW
+                                )}
+                            </Group>
+                        ) : (
+                            <Text
+                                text={stickyText || (node.id === editingNodeId ? '' : 'Double-click to edit')}
+                                width={maxW}
+                                height={maxH}
+                                x={pad}
+                                y={pad}
+                                fontSize={stickyFontSize}
+                                fill={stickyText ? (node.textColor || '#1a1a1a') : '#aaa'}
+                                fontFamily={node.fontFamily || 'Arial'}
+                                fontStyle={node.fontStyle || 'normal'}
+                                textDecoration={node.textDecoration || 'none'}
+                                wrap="word"
+                                align={node.align || 'left'}
+                                verticalAlign="top"
+                            />
+                        )}
                         {node.locked && (
                             <Text text="🔒" x={node.width - 22} y={4} fontSize={14} />
                         )}
@@ -1461,10 +1681,27 @@ export default function Whiteboard() {
                         {...previewProps}
                     />
                 );
-            case 'cross':
+            case 'cross': {
                 const cs = size / 2;
                 const cw = cs * 0.35;
                 return <Line x={centerX} y={centerY} points={[-cw, -cs, cw, -cs, cw, -cw, cs, -cw, cs, cw, cw, cw, cw, cs, -cw, cs, -cw, cw, -cs, cw, -cs, -cw, -cw, -cw]} closed {...previewProps} />;
+            }
+            case 'doubleArrow':
+                return <Arrow points={[startX, startY, currentX, currentY]} {...previewProps} pointerLength={15} pointerWidth={15} pointerAtBeginning />;
+            case 'dashedLine':
+                return <Line points={[startX, startY, currentX, currentY]} {...previewProps} lineCap="round" dash={[12, 8]} />;
+            case 'dottedLine':
+                return <Line points={[startX, startY, currentX, currentY]} {...previewProps} lineCap="round" dash={[2, 10]} />;
+            case 'parallelogram': {
+                const s = width * 0.25;
+                return <Line x={centerX} y={centerY} points={[-width / 2 + s, -height / 2, width / 2, -height / 2, width / 2 - s, height / 2, -width / 2, height / 2]} closed {...previewProps} />;
+            }
+            case 'trapezoid': {
+                const s = width * 0.2;
+                return <Line x={centerX} y={centerY} points={[-width / 2 + s, -height / 2, width / 2 - s, -height / 2, width / 2, height / 2, -width / 2, height / 2]} closed {...previewProps} />;
+            }
+            case 'rightTriangle':
+                return <Line x={centerX} y={centerY} points={[-width / 2, -height / 2, -width / 2, height / 2, width / 2, height / 2]} closed {...previewProps} />;
             default:
                 return null;
         }
@@ -1472,7 +1709,9 @@ export default function Whiteboard() {
 
     const getCursor = () => {
         if (tool === 'eraser') {
-            return `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23666" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="4" y1="20" x2="20" y2="4"/></svg>') 12 12, auto`;
+            // A bare eraser glyph — the eraser block and its crease only, without
+            // the surface line beneath it.
+            return `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23555" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="m5 11 9 9"/></svg>') 5 19, auto`;
         }
         if (tool === 'pen') {
             const colorHex = encodeURIComponent(strokeColor);
@@ -1486,14 +1725,21 @@ export default function Whiteboard() {
             const r = size / 2;
             return `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="${size + 2}" height="${size + 2}" viewBox="0 0 ${size + 2} ${size + 2}"><circle cx="${r + 1}" cy="${r + 1}" r="${r}" fill="${colorHex}" fill-opacity="0.5" stroke="%23333" stroke-width="0.5"/></svg>') ${r + 1} ${r + 1}, crosshair`;
         }
+        if (tool === 'laser') {
+            // A solid red dot the size of the user-set laser width (same idea as
+            // the highlighter cursor) instead of a crosshair.
+            const size = Math.max(6, Math.min(laserStrokeWidth, 48));
+            const r = size / 2;
+            return `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="${size + 2}" height="${size + 2}" viewBox="0 0 ${size + 2} ${size + 2}"><circle cx="${r + 1}" cy="${r + 1}" r="${r}" fill="%23ff3333"/></svg>') ${r + 1} ${r + 1}, crosshair`;
+        }
         if (tool === 'comment') return 'crosshair';
-        if (tool === 'shape' || tool === 'laser' || tool === 'frame') return 'crosshair';
+        if (tool === 'shape' || tool === 'frame') return 'crosshair';
         if (tool === 'text' || tool === 'sticky') return 'text';
         return 'default';
     };
 
     return (
-        <div className="absolute inset-0 overflow-hidden" style={{ backgroundColor: theme === 'dark' ? '#1a1a1a' : '#f5f6f8', cursor: getCursor() }}>
+        <div className="absolute inset-0 overflow-hidden" style={{ backgroundColor: 'transparent', cursor: getCursor() }}>
             <Stage
                 ref={stageRef}
                 width={stageSize.width}
@@ -1552,7 +1798,7 @@ export default function Whiteboard() {
                                 key={line.id}
                                 points={line.points}
                                 stroke="#ff3333"
-                                strokeWidth={3}
+                                strokeWidth={laserStrokeWidth}
                                 opacity={line.opacity}
                                 shadowColor="#ff3333"
                                 shadowBlur={15}
@@ -1574,10 +1820,14 @@ export default function Whiteboard() {
             {/* YouTube overlays — inline playback positioned over the canvas */}
             <YoutubeOverlays />
             {/* Floating shape toolbar */}
+            {/* Reading layerRef during render is intentional: the Konva node's
+                screen rect is only available via refs, and selection state always
+                re-renders after the canvas has committed. */}
+            {/* eslint-disable-next-line react-hooks/refs */}
             {selectedNodeIds.length === 1 && (() => {
                 const selNode = nodes.find(n => n.id === selectedNodeIds[0]);
                 if (!selNode) return null;
-                const shapeTypes = ['rectangle', 'roundedRect', 'circle', 'ellipse', 'triangle', 'diamond', 'pentagon', 'hexagon', 'octagon', 'star', 'heart', 'cloud', 'cross', 'rhombus'];
+                const shapeTypes = ['rectangle', 'roundedRect', 'circle', 'ellipse', 'triangle', 'diamond', 'pentagon', 'hexagon', 'octagon', 'star', 'heart', 'cloud', 'cross', 'rhombus', 'parallelogram', 'trapezoid', 'rightTriangle', 'arrow', 'simpleLine'];
                 if (!shapeTypes.includes(selNode.type)) return null;
                 const konvaNode = layerRef.current?.findOne(`#${selNode.id}`);
                 if (!konvaNode || !stageRef.current) return null;
@@ -1588,6 +1838,7 @@ export default function Whiteboard() {
             })()}
 
             {/* Floating text toolbar — when a text node is selected */}
+            {/* eslint-disable-next-line react-hooks/refs */}
             {selectedNodeIds.length === 1 && (() => {
                 const selNode = nodes.find(n => n.id === selectedNodeIds[0]);
                 if (!selNode || (selNode.type !== 'text' && selNode.type !== 'sticky')) return null;
@@ -1712,42 +1963,28 @@ function VideoOverlayPlayer({ node, stageScale, stagePosition, updateNode }) {
     const x = node.x * stageScale + stagePosition.x;
     const y = node.y * stageScale + stagePosition.y;
 
-    // Load video src upfront — handles both direct URLs and IDB-stored blobs
+    // Load video src upfront — handles direct URLs and IDB-stored data.
+    // The src (a data: URL, or a blob: URL for very large files) is used
+    // directly. We must NOT fetch() a data: URL to convert it: the app's CSP
+    // blocks `connect-src data:`, so that fetch throws and the video never loads.
     useEffect(() => {
         let cancelled = false;
         const loadSrc = async () => {
             setLoading(true);
             setLoadError(false);
-
-            // If src is a valid non-empty URL/dataURL (not an IDB placeholder and not empty), use it directly
-            if (node.src && node.src.length > 10 && !node.src.startsWith('__idb__')) {
-                if (!cancelled) { setVideoSrc(node.src); setLoading(false); }
-                return;
-            }
-
-            // Otherwise load from IndexedDB
             try {
-                const { loadMediaFromDB } = await import('../../store/useStore');
-                // Try multiple key patterns to find the video data
-                const key = node.src && node.src.startsWith('__idb__')
-                    ? node.src.replace('__idb__', '')
-                    : node.id;
-                const dbSrc = await loadMediaFromDB(key)
-                    || await loadMediaFromDB(node.id)
-                    || await loadMediaFromDB(`${node.id}_video`);
-                if (!cancelled) {
-                    if (dbSrc) {
-                        setVideoSrc(dbSrc);
-                    } else {
-                        // Last resort: if the original src is a data URL that wasn't stored, try it anyway
-                        if (node.src && node.src.startsWith('data:')) {
-                            setVideoSrc(node.src);
-                        } else {
-                            setLoadError(true);
-                        }
-                    }
-                    setLoading(false);
+                // Resolve the source, recovering from IndexedDB if needed
+                let raw = node.src;
+                if (!raw || raw.length <= 10 || raw.startsWith('__idb__')) {
+                    const { loadMediaFromDB } = await import('../../store/useStore');
+                    const key = raw && raw.startsWith('__idb__') ? raw.replace('__idb__', '') : node.id;
+                    raw = await loadMediaFromDB(key)
+                        || await loadMediaFromDB(node.id)
+                        || await loadMediaFromDB(`${node.id}_video`)
+                        || (raw && (raw.startsWith('data:') || raw.startsWith('blob:')) ? raw : null);
                 }
+                if (!raw) { if (!cancelled) { setLoadError(true); setLoading(false); } return; }
+                if (!cancelled) { setVideoSrc(raw); setLoading(false); }
             } catch (e) {
                 console.error('Video load error:', e);
                 if (!cancelled) { setLoadError(true); setLoading(false); }
@@ -1757,6 +1994,20 @@ function VideoOverlayPlayer({ node, stageScale, stagePosition, updateNode }) {
         return () => { cancelled = true; };
     }, [node.id, node.src]);
 
+    // Kick off playback explicitly once the source is ready — the autoPlay
+    // attribute alone is unreliable when the element mounts after a state update.
+    useEffect(() => {
+        if (loading || loadError || !videoSrc) return;
+        const v = videoRef.current;
+        if (!v) return;
+        const tryPlay = () => { const p = v.play(); if (p && p.catch) p.catch(() => { }); };
+        if (v.readyState >= 2) tryPlay();
+        else {
+            v.addEventListener('canplay', tryPlay, { once: true });
+            return () => v.removeEventListener('canplay', tryPlay);
+        }
+    }, [loading, loadError, videoSrc]);
+
     return (
         <div
             className="absolute z-[100] overflow-hidden rounded-xl shadow-2xl"
@@ -1765,7 +2016,7 @@ function VideoOverlayPlayer({ node, stageScale, stagePosition, updateNode }) {
         >
             {loading ? (
                 <div className="w-full h-full bg-gray-900 flex flex-col items-center justify-center text-white gap-2">
-                    <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <LogoSpinner className="w-12 h-12" />
                     <span className="text-xs text-gray-400">Loading video...</span>
                 </div>
             ) : loadError ? (
@@ -1775,11 +2026,13 @@ function VideoOverlayPlayer({ node, stageScale, stagePosition, updateNode }) {
                 </div>
             ) : (
                 <video
+                    key={videoSrc}
                     ref={videoRef}
                     src={videoSrc}
                     autoPlay
                     controls
                     playsInline
+                    onError={() => setLoadError(true)}
                     style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
                 />
             )}

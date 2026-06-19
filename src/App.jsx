@@ -11,13 +11,13 @@ import PdfUploader from './components/Upload/PdfUploader';
 import AudioUploader from './components/Upload/AudioUploader';
 import VideoUploader from './components/Upload/VideoUploader';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import useStore from './store/useStore';
 
 function App() {
   const {
     tool, setTool, deleteSelectedNodes, selectedNodeIds, clearSelection,
-    loadData, nodes, addNode,
+    loadData, addNode,
     undo, redo,
     theme,
     copySelectedNodes, pasteNodes, cutSelectedNodes,
@@ -67,7 +67,7 @@ function App() {
 
         // PDFs must be handled with arrayBuffer, not FileReader
         if (file.type === 'application/pdf' || ext === 'pdf') {
-          import('./components/Upload/PdfUploader').then(async ({ loadPdfJs, bytesToBase64 }) => {
+          import('./utils/pdfHelpers').then(async ({ loadPdfJs, bytesToBase64 }) => {
             const { saveMediaToDB } = await import('./store/useStore');
             const { v4: uuidv4 } = await import('uuid');
             try {
@@ -266,10 +266,28 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setTool, handleDelete, clearSelection, undo, redo]);
+  }, [setTool, handleDelete, clearSelection, undo, redo, copySelectedNodes, pasteNodes, cutSelectedNodes]);
 
   return (
     <div className="w-full h-full relative" style={{ backgroundColor: theme === 'dark' ? '#1a1a1a' : '#f5f6f8' }}>
+      {/* Fixed, faint watermark logo — sits behind the canvas and never moves
+          with pan/zoom because it lives outside the Konva stage transform. */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 0,
+          pointerEvents: 'none',
+          backgroundImage: 'url(/transp_bg.png)',
+          backgroundRepeat: 'no-repeat',
+          backgroundPosition: 'center',
+          backgroundSize: 'cover',
+          transform: 'scale(1.3)', // 30% larger watermark logo
+          opacity: theme === 'dark' ? 0.10 : 0.08,
+        }}
+      />
+
       {/* Canvas */}
       <Whiteboard />
 

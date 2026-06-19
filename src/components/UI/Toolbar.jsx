@@ -1,10 +1,11 @@
 import {
-    MousePointer2, Square, Type, Image, Youtube, Pencil, Trash2, Eraser, FileText, ChevronRight,
-    Circle, Triangle, Star, Diamond, Hexagon, Minus, ArrowRight, Pentagon, Octagon, Heart, Cloud, RectangleHorizontal, Plus,
-    Undo2, Redo2, FolderOpen, Music, Video, Highlighter, StickyNote, Pointer, Frame, MessageCircle, ChevronDown,
+    MousePointer2, Square, Type, Pencil, Trash2, Eraser, ChevronRight,
+    Circle, Triangle, Star, Diamond, Hexagon, Minus, ArrowRight, ArrowLeftRight, MoreHorizontal, Pentagon, Octagon, Heart, Cloud, RectangleHorizontal, Plus,
+    Undo2, Redo2, FolderOpen, Highlighter, StickyNote,
     Timer, Play, Pause, RotateCcw
 } from 'lucide-react';
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import useStore from '../../store/useStore';
 import { cn } from '../../lib/utils';
 import ConfirmModal from './ConfirmModal';
@@ -26,11 +27,17 @@ const shapeOptions = [
     { id: 'cloud', Icon: Cloud, label: 'Cloud' },
     { id: 'cross', Icon: Plus, label: 'Cross/Plus' },
     { id: 'rhombus', Icon: Diamond, label: 'Rhombus' },
+    { id: 'parallelogram', Icon: RectangleHorizontal, label: 'Parallelogram' },
+    { id: 'trapezoid', Icon: Square, label: 'Trapezoid' },
+    { id: 'rightTriangle', Icon: Triangle, label: 'Right Triangle' },
 ];
 
 const lineOptions = [
     { id: 'arrow', Icon: ArrowRight, label: 'Arrow' },
+    { id: 'doubleArrow', Icon: ArrowLeftRight, label: 'Double Arrow' },
     { id: 'line', Icon: Minus, label: 'Line' },
+    { id: 'dashedLine', Icon: Minus, label: 'Dashed Line' },
+    { id: 'dottedLine', Icon: MoreHorizontal, label: 'Dotted Line' },
 ];
 
 const STICKY_COLORS = [
@@ -38,18 +45,103 @@ const STICKY_COLORS = [
     '#bae6fd', '#ddd6fe', '#fecdd3', '#fed7aa',
 ];
 
+// Random rotations for the sticky pile, fixed at module load so they never jitter
+const STICKY_ROTATIONS = Array.from({ length: 25 }, () => (Math.random() - 0.5) * 8);
+
+// Tools that open a submenu popup when activated
+const POPUP_TOOLS = ['shape', 'sticky', 'pen', 'highlighter', 'laser'];
+
+// A glossy red "laser dot" used as the laser-pointer tool icon (replaces the
+// hand/pointer glyph). Accepts the same style/className the nav passes to icons.
+function LaserDot(props) {
+    return (
+        <svg viewBox="0 0 24 24" fill="none" {...props}>
+            <circle cx="12" cy="12" r="9" fill="#ff3b30" opacity="0.25" />
+            <circle cx="12" cy="12" r="5.5" fill="#ff3b30" />
+            <circle cx="10.3" cy="10.3" r="1.5" fill="#ffffff" opacity="0.85" />
+        </svg>
+    );
+}
+
 // Tool definitions for the magic nav
 const NAV_TOOLS = [
     { id: 'select', Icon: MousePointer2, label: 'Select (V)' },
-    { id: 'shape', Icon: Square, label: 'Shapes (S)', hasPopup: true },
+    { id: 'shape', Icon: Square, label: 'Shapes (S)' },
     { id: 'text', Icon: Type, label: 'Text (T)' },
-    { id: 'pen', Icon: Pencil, label: 'Pen (P)', hasPopup: true },
-    { id: 'highlighter', Icon: Highlighter, label: 'Highlighter (H)', hasPopup: true },
+    { id: 'pen', Icon: Pencil, label: 'Pen (P)' },
+    { id: 'highlighter', Icon: Highlighter, label: 'Highlighter (H)' },
     { id: 'eraser', Icon: Eraser, label: 'Eraser (E)' },
-    { id: 'sticky', Icon: StickyNote, label: 'Sticky Note (N)', hasPopup: true },
-    { id: 'comment', Icon: MessageCircle, label: 'Comment' },
-    { id: 'laser', Icon: Pointer, label: 'Laser Pointer (L)' },
+    { id: 'sticky', Icon: StickyNote, label: 'Sticky Note (N)' },
+    { id: 'laser', Icon: LaserDot, label: 'Laser Pointer (L)' },
 ];
+
+const ITEM_HEIGHT = 46; // Height of each nav item in px
+
+/** Opaque popup anchored next to a toolbar button. `reserve` keeps it on-screen. */
+function ToolPopup({ anchorTop, isDark, width = 220, reserve = 260, children }) {
+    const top = anchorTop != null
+        ? `${Math.max(8, Math.min(anchorTop, window.innerHeight - reserve))}px`
+        : '50%';
+    return (
+        <div
+            className={`fixed rounded-xl p-3 z-50 ${isDark ? 'popup-solid-dark menu-accent-edge' : 'popup-solid'}`}
+            style={{
+                left: 'clamp(58px, 4vw + 2vh, 70px)',
+                top,
+                width: `${width}px`,
+                maxHeight: 'calc(100vh - 16px)',
+                overflowY: 'auto',
+                scrollbarWidth: 'thin',
+            }}
+        >
+            {children}
+        </div>
+    );
+}
+
+function SliderControl({ label, min, max, value, onChange, isDark }) {
+    const labelCls = `text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`;
+    return (
+        <div>
+            <div className={`${labelCls} mb-1`}>{label}</div>
+            <input
+                type="range"
+                min={min}
+                max={max}
+                value={value}
+                onChange={(e) => onChange(Number(e.target.value))}
+                className="w-full h-1.5 accent-purple-500"
+            />
+            <div className={`${labelCls} mt-1`}>{value}px</div>
+        </div>
+    );
+}
+
+function ShapeGrid({ options, selectedId, isDark, onSelect }) {
+    return (
+        <div className="grid grid-cols-4 gap-2 mb-3">
+            {options.map(opt => (
+                <button
+                    key={opt.id}
+                    onClick={() => onSelect(opt.id)}
+                    className={cn(
+                        "w-10 h-10 flex items-center justify-center rounded-lg transition-all border-2",
+                        selectedId === opt.id
+                            ? "bg-purple-100 text-purple-600 border-purple-400"
+                            : isDark ? "hover:bg-gray-700 border-transparent text-gray-300" : "hover:bg-gray-100 border-transparent text-gray-700"
+                    )}
+                    title={opt.label}
+                >
+                    <opt.Icon className="w-6 h-6" />
+                </button>
+            ))}
+        </div>
+    );
+}
+
+function Divider({ isDark }) {
+    return <div className={`h-px ${isDark ? 'bg-white/15' : 'bg-black/10'}`} style={{ margin: '4px 6px' }} />;
+}
 
 /**
  * Countdown/Stopwatch timer widget for the toolbar.
@@ -64,38 +156,61 @@ function TimerWidget({ isDark }) {
     const [isFinished, setIsFinished] = useState(false);
     const intervalRef = useRef(null);
     const containerRef = useRef(null);
+    const popupRef = useRef(null);
 
-    // Countdown tick
+    // Countdown tick — one interval per run, not one per second
     useEffect(() => {
-        if (isRunning && totalSeconds > 0) {
-            intervalRef.current = setInterval(() => {
-                setTotalSeconds(prev => {
-                    if (prev <= 1) {
-                        clearInterval(intervalRef.current);
-                        setIsRunning(false);
-                        setIsFinished(true);
-                        return 0;
-                    }
-                    return prev - 1;
-                });
-            }, 1000);
-        }
-        return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-    }, [isRunning, totalSeconds]);
+        if (!isRunning) return;
+        intervalRef.current = setInterval(() => {
+            setTotalSeconds(prev => {
+                if (prev <= 1) {
+                    setIsRunning(false);
+                    setIsFinished(true);
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+        return () => clearInterval(intervalRef.current);
+    }, [isRunning]);
+
+    // Play a short double "beep" when the countdown reaches zero.
+    useEffect(() => {
+        if (!isFinished) return;
+        try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            const ctx = new Ctx();
+            const beep = (at, freq) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain); gain.connect(ctx.destination);
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0.0001, ctx.currentTime + at);
+                gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + at + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.18);
+                osc.start(ctx.currentTime + at);
+                osc.stop(ctx.currentTime + at + 0.2);
+            };
+            beep(0, 880);
+            beep(0.25, 880);
+            setTimeout(() => { try { ctx.close(); } catch { /* ignore */ } }, 900);
+        } catch { /* audio unavailable — ignore */ }
+    }, [isFinished]);
 
     // Close on outside click — always close, timer keeps counting in background
     useEffect(() => {
         if (!showTimer) return;
         const handleClickOutside = (e) => {
-            if (containerRef.current && !containerRef.current.contains(e.target)) {
-                setShowTimer(false);
-            }
+            // The popup is portaled to <body>, so it's outside containerRef — check it too.
+            if (containerRef.current?.contains(e.target)) return;
+            if (popupRef.current?.contains(e.target)) return;
+            setShowTimer(false);
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [showTimer]);
-
-
 
     const displayH = Math.floor(totalSeconds / 3600);
     const displayM = Math.floor((totalSeconds % 3600) / 60);
@@ -103,25 +218,23 @@ function TimerWidget({ isDark }) {
     const pad = (n) => String(n).padStart(2, '0');
 
     const handleStart = () => {
-        if (!isRunning && totalSeconds === 0) {
+        if (isRunning) {
+            setIsRunning(false);
+            return;
+        }
+        if (totalSeconds === 0) {
             const total = hours * 3600 + minutes * 60 + seconds;
             if (total <= 0) return;
             setTotalSeconds(total);
-            setIsFinished(false);
-            setIsRunning(true);
-        } else if (!isRunning && totalSeconds > 0) {
-            setIsFinished(false);
-            setIsRunning(true);
-        } else {
-            setIsRunning(false);
         }
+        setIsFinished(false);
+        setIsRunning(true);
     };
 
     const handleReset = () => {
         setIsRunning(false);
         setTotalSeconds(0);
         setIsFinished(false);
-        if (intervalRef.current) clearInterval(intervalRef.current);
     };
 
     const timerActive = isRunning || totalSeconds > 0;
@@ -133,17 +246,29 @@ function TimerWidget({ isDark }) {
                 className={cn(
                     "flex items-center justify-center rounded-lg transition-all relative",
                     showTimer
-                        ? "text-purple-500"
+                        ? "text-white"
                         : isFinished
                             ? "text-red-500 animate-pulse"
                             : timerActive
                                 ? "text-green-500"
-                                : isDark ? "text-gray-400 hover:bg-gray-700" : "text-gray-500 hover:bg-gray-100"
+                                : isDark ? "text-gray-400 hover:bg-white/10" : "text-gray-500 hover:bg-black/5"
                 )}
                 style={{ width: '42px', height: '42px' }}
                 title="Timer"
             >
-                <Timer style={{ width: '18px', height: '18px' }} />
+                {/* Active indicator — same gradient circle the magic-nav uses */}
+                {showTimer && (
+                    <div style={{
+                        position: 'absolute',
+                        inset: 0,
+                        borderRadius: '50%',
+                        background: 'linear-gradient(135deg, #7b5ea7, #4a90d9, #2ec4b6)',
+                        boxShadow: '0 0 15px rgba(74, 144, 217, 0.4), 0 0 30px rgba(74, 144, 217, 0.15)',
+                        zIndex: 0,
+                        pointerEvents: 'none',
+                    }} />
+                )}
+                <Timer style={{ width: '18px', height: '18px', position: 'relative', zIndex: 1 }} />
                 {timerActive && (
                     <div
                         className="absolute"
@@ -159,9 +284,10 @@ function TimerWidget({ isDark }) {
                 )}
             </button>
 
-            {showTimer && (
+            {showTimer && createPortal(
                 <div
-                    className={`fixed rounded-xl shadow-xl border p-3 z-50 ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+                    ref={popupRef}
+                    className={`fixed rounded-xl p-3 z-[60] ${isDark ? 'popup-solid-dark menu-accent-edge' : 'popup-solid'}`}
                     style={{
                         left: '58px',
                         top: '50%',
@@ -180,7 +306,7 @@ function TimerWidget({ isDark }) {
                             fontSize: '28px',
                             fontWeight: '700',
                             letterSpacing: '1px',
-                            background: isDark ? '#1f2937' : '#f3f4f6',
+                            background: isDark ? '#111827' : '#f3f4f6',
                             color: isFinished ? '#ef4444' : timerActive ? (isDark ? '#e0e0e0' : '#1f2937') : (isDark ? '#9ca3af' : '#6b7280'),
                             transition: 'color 0.3s',
                         }}
@@ -239,7 +365,8 @@ function TimerWidget({ isDark }) {
                             Reset
                         </button>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );
@@ -248,51 +375,44 @@ function TimerWidget({ isDark }) {
 export default function Toolbar() {
     const {
         tool, setTool, shapeType, setShapeType,
-        fillColor, setFillColor,
         strokeColor, setStrokeColor,
         penStrokeWidth, setPenStrokeWidth,
         highlighterStrokeWidth, setHighlighterStrokeWidth,
+        laserStrokeWidth, setLaserStrokeWidth,
         objectStrokeWidth, setObjectStrokeWidth,
-        textColor, setTextColor,
-        textFontFamily, setTextFontFamily,
-        textFontSize, setTextFontSize,
         highlighterColor, setHighlighterColor,
         cornerRadius, setCornerRadius,
         nodes, selectedNodeIds, deleteAllNodes, deleteSelectedNodes,
         isSaving, isLoading, lastSaved,
         undo, redo, canUndo, canRedo,
         theme,
-        addNode,
+        stickyColor, setStickyColor,
+        stickyPileMode, setStickyPileMode,
     } = useStore();
 
     const isDark = theme === 'dark';
 
-    // Memoize random rotations for sticky pile so they don't jitter on re-render
-    const stickyRotations = useMemo(() => Array.from({ length: 25 }, () => (Math.random() - 0.5) * 8), []);
-
+    // activePopup: { name, anchorTop } — the button is measured when the popup
+    // opens, so render never has to touch refs
     const [activePopup, setActivePopup] = useState(null);
     const [showConfirm, setShowConfirm] = useState(false);
     const [showMediaModal, setShowMediaModal] = useState(false);
     const popupRef = useRef(null);
-    const penBtnRef = useRef(null);
-    const shapeBtnRef = useRef(null);
-    const highlighterBtnRef = useRef(null);
-    const textBtnRef = useRef(null);
-    const stickyBtnRef = useRef(null);
-    const navListRef = useRef(null);
+    const popupBtnRefs = useRef({});
+
+    const openPopup = useCallback((name) => {
+        const btn = popupBtnRefs.current[name];
+        setActivePopup({ name, anchorTop: btn ? btn.getBoundingClientRect().top : null });
+    }, []);
 
     // Auto-open popups when the tool is set from outside (e.g. keyboard shortcut)
     useEffect(() => {
-        if (tool === 'shape' && activePopup !== 'shape') {
-            setActivePopup('shape');
-        } else if (tool === 'sticky' && activePopup !== 'sticky') {
-            setActivePopup('sticky');
-        } else if (tool === 'pen' && activePopup !== 'pen') {
-            setActivePopup('pen');
-        } else if (tool === 'highlighter' && activePopup !== 'highlighter') {
-            setActivePopup('highlighter');
-        }
-    }, [tool]);
+        return useStore.subscribe((state, prev) => {
+            if (state.tool !== prev.tool && POPUP_TOOLS.includes(state.tool)) {
+                openPopup(state.tool);
+            }
+        });
+    }, [openPopup]);
 
     // Close popup when clicking outside
     useEffect(() => {
@@ -305,16 +425,15 @@ export default function Toolbar() {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    const handleToolClick = (toolName, hasPopup = false) => {
+    const handleToolClick = (toolName, hasPopup) => {
+        if (hasPopup && activePopup?.name === toolName) {
+            setActivePopup(null);
+            return;
+        }
+        setTool(toolName);
         if (hasPopup) {
-            if (activePopup === toolName) {
-                setActivePopup(null);
-            } else {
-                setActivePopup(toolName);
-                setTool(toolName);
-            }
+            openPopup(toolName);
         } else {
-            setTool(toolName);
             setActivePopup(null);
         }
     };
@@ -326,20 +445,19 @@ export default function Toolbar() {
     };
 
     const handleStickyPileClick = (color) => {
-        // Set the selected color in store and switch to sticky tool
-        useStore.getState().setStickyColor(color);
+        setStickyColor(color);
         setTool('sticky');
         setActivePopup(null);
     };
 
     // Find the active tool index for the indicator
     const activeIndex = NAV_TOOLS.findIndex(t => t.id === tool);
-    const ITEM_HEIGHT = 46; // Height of each nav item in px
+    const iconBtnCls = isDark ? "text-gray-400 hover:bg-white/10" : "text-gray-500 hover:bg-black/5";
 
     return (
         <div className="fixed left-0 top-0 bottom-0 z-40 flex items-center" ref={popupRef}>
             <div
-                className={`magic-nav rounded-r-xl shadow-lg border border-l-0 flex flex-col my-2 ml-0 ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
+                className={`magic-nav rounded-r-2xl border-l-0 flex flex-col my-2 ml-0 ${isDark ? 'glass-panel-dark menu-accent-edge' : 'glass-panel'}`}
                 style={{
                     padding: '4px 0',
                     maxHeight: 'calc(100vh - 16px)',
@@ -351,7 +469,7 @@ export default function Toolbar() {
                 }}
             >
                 {/* Magic Navigation Section */}
-                <div className="magic-nav-section" ref={navListRef} style={{ position: 'relative', padding: '0 4px' }}>
+                <div className="magic-nav-section" style={{ position: 'relative', padding: '0 4px' }}>
                     {/* Animated Indicator */}
                     {activeIndex >= 0 && (
                         <div
@@ -373,21 +491,16 @@ export default function Toolbar() {
                         />
                     )}
 
-                    {NAV_TOOLS.map((navTool, index) => {
+                    {NAV_TOOLS.map((navTool) => {
                         const isActive = tool === navTool.id;
+                        const hasPopup = POPUP_TOOLS.includes(navTool.id);
                         const Icon = navTool.Icon;
-                        const btnRef = navTool.id === 'shape' ? shapeBtnRef
-                            : navTool.id === 'pen' ? penBtnRef
-                                : navTool.id === 'highlighter' ? highlighterBtnRef
-                                    : navTool.id === 'text' ? textBtnRef
-                                        : navTool.id === 'sticky' ? stickyBtnRef
-                                            : null;
 
                         return (
                             <button
                                 key={navTool.id}
-                                ref={btnRef}
-                                onClick={() => handleToolClick(navTool.id, navTool.hasPopup)}
+                                ref={(el) => { popupBtnRefs.current[navTool.id] = el; }}
+                                onClick={() => handleToolClick(navTool.id, hasPopup)}
                                 className={cn(
                                     "magic-nav-item flex items-center justify-center transition-all relative",
                                     isActive
@@ -416,7 +529,7 @@ export default function Toolbar() {
                                         filter: isActive ? 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' : 'none',
                                     }}
                                 />
-                                {navTool.hasPopup && !isActive && (
+                                {hasPopup && !isActive && (
                                     <ChevronRight
                                         className="absolute opacity-40"
                                         style={{
@@ -448,12 +561,12 @@ export default function Toolbar() {
                     })}
                 </div>
 
-                <div className={`h-px mx-2 ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} style={{ margin: '4px 6px' }} />
+                <Divider isDark={isDark} />
 
                 {/* Timer Widget */}
                 <TimerWidget isDark={isDark} />
 
-                <div className={`h-px mx-2 ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} style={{ margin: '4px 6px' }} />
+                <Divider isDark={isDark} />
 
                 {/* Media Upload */}
                 <div style={{ padding: '0 4px' }}>
@@ -463,10 +576,7 @@ export default function Toolbar() {
                             setShowMediaModal(true);
                             setActivePopup(null);
                         }}
-                        className={cn(
-                            "flex items-center justify-center rounded-lg transition-all relative group",
-                            isDark ? "text-gray-400 hover:bg-gray-700" : "text-gray-500 hover:bg-gray-100"
-                        )}
+                        className={cn("flex items-center justify-center rounded-lg transition-all relative", iconBtnCls)}
                         style={{ width: '42px', height: '42px' }}
                         title="Add Media (YouTube, Images, Audio, Video, PDF)"
                     >
@@ -475,7 +585,7 @@ export default function Toolbar() {
                     </button>
                 </div>
 
-                <div className={`h-px ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} style={{ margin: '4px 6px' }} />
+                <Divider isDark={isDark} />
 
                 {/* Delete */}
                 <div style={{ padding: '0 4px' }}>
@@ -491,7 +601,7 @@ export default function Toolbar() {
                         className={cn(
                             "flex items-center justify-center rounded-lg transition-colors",
                             nodes.length > 0
-                                ? "text-red-500 hover:bg-red-50"
+                                ? "text-red-500 hover:bg-red-500/10"
                                 : "text-gray-300 cursor-not-allowed"
                         )}
                         style={{ width: '42px', height: '42px' }}
@@ -501,41 +611,33 @@ export default function Toolbar() {
                     </button>
                 </div>
 
-                <div className={`h-px ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} style={{ margin: '4px 6px' }} />
+                <Divider isDark={isDark} />
 
                 {/* Undo/Redo */}
                 <div style={{ padding: '0 4px' }}>
-                    <button
-                        onClick={() => undo()}
-                        disabled={!canUndo()}
-                        className={cn(
-                            "flex items-center justify-center rounded-lg transition-colors",
-                            canUndo()
-                                ? isDark ? "text-gray-400 hover:text-gray-200 hover:bg-gray-700" : "text-gray-500 hover:text-gray-800 hover:bg-gray-100"
-                                : "text-gray-300 cursor-not-allowed"
-                        )}
-                        style={{ width: '42px', height: '42px' }}
-                        title="Undo (Ctrl+Z)"
-                    >
-                        <Undo2 style={{ width: '18px', height: '18px' }} />
-                    </button>
-                    <button
-                        onClick={() => redo()}
-                        disabled={!canRedo()}
-                        className={cn(
-                            "flex items-center justify-center rounded-lg transition-colors",
-                            canRedo()
-                                ? isDark ? "text-gray-400 hover:text-gray-200 hover:bg-gray-700" : "text-gray-500 hover:text-gray-800 hover:bg-gray-100"
-                                : "text-gray-300 cursor-not-allowed"
-                        )}
-                        style={{ width: '42px', height: '42px' }}
-                        title="Redo (Ctrl+Y)"
-                    >
-                        <Redo2 style={{ width: '18px', height: '18px' }} />
-                    </button>
+                    {[
+                        { action: undo, enabled: canUndo(), Icon: Undo2, label: 'Undo (Ctrl+Z)' },
+                        { action: redo, enabled: canRedo(), Icon: Redo2, label: 'Redo (Ctrl+Y)' },
+                    ].map(item => (
+                        <button
+                            key={item.label}
+                            onClick={item.action}
+                            disabled={!item.enabled}
+                            className={cn(
+                                "flex items-center justify-center rounded-lg transition-colors",
+                                item.enabled
+                                    ? isDark ? "text-gray-400 hover:text-gray-200 hover:bg-white/10" : "text-gray-500 hover:text-gray-800 hover:bg-black/5"
+                                    : "text-gray-300 cursor-not-allowed"
+                            )}
+                            style={{ width: '42px', height: '42px' }}
+                            title={item.label}
+                        >
+                            <item.Icon style={{ width: '18px', height: '18px' }} />
+                        </button>
+                    ))}
                 </div>
 
-                <div className={`h-px ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} style={{ margin: '4px 6px' }} />
+                <Divider isDark={isDark} />
 
                 {/* Status indicator */}
                 <div
@@ -543,15 +645,12 @@ export default function Toolbar() {
                     style={{ width: '42px', height: '42px', margin: '0 4px' }}
                     title={isLoading ? "Loading..." : isSaving ? "Saving..." : lastSaved ? "Saved" : "Local"}
                 >
-                    {isLoading ? (
-                        <div className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-pulse" />
-                    ) : isSaving ? (
-                        <div className="w-2.5 h-2.5 bg-yellow-500 rounded-full animate-pulse" />
-                    ) : lastSaved ? (
-                        <div className="w-2.5 h-2.5 bg-green-500 rounded-full" />
-                    ) : (
-                        <div className="w-2.5 h-2.5 bg-gray-400 rounded-full" />
-                    )}
+                    <div className={cn(
+                        "w-2.5 h-2.5 rounded-full",
+                        isLoading ? "bg-blue-500 animate-pulse"
+                            : isSaving ? "bg-yellow-500 animate-pulse"
+                                : lastSaved ? "bg-green-500" : "bg-gray-400"
+                    )} />
                 </div>
             </div>
 
@@ -563,40 +662,32 @@ export default function Toolbar() {
                 onCancel={() => setShowConfirm(false)}
             />
 
+            {/* Unified Media Modal */}
+            {showMediaModal && (
+                <UnifiedMediaModal onClose={() => setShowMediaModal(false)} />
+            )}
+
             {/* Sticky Note Pile Popup */}
-            {activePopup === 'sticky' && (
-                <div
-                    className={`fixed rounded-xl shadow-xl border p-3 z-50 ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
-                    style={{
-                        left: 'clamp(58px, 4vw + 2vh, 70px)',
-                        top: stickyBtnRef.current ? `${stickyBtnRef.current.getBoundingClientRect().top}px` : '50%',
-                        width: '220px',
-                    }}
-                >
+            {activePopup?.name === 'sticky' && (
+                <ToolPopup anchorTop={activePopup.anchorTop} isDark={isDark} reserve={320}>
                     <div className={`text-xs mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Sticky Notes</div>
                     <div className="flex items-center justify-between mb-2">
                         <span className="text-[10px] text-gray-400">Click color, then click canvas to place</span>
                     </div>
                     <div className="flex items-center gap-2 mb-2">
                         <button
-                            onClick={() => {
-                                const st = useStore.getState();
-                                st.setStickyPileMode(!st.stickyPileMode);
-                            }}
-                            className={`px-2 py-1 text-[10px] rounded-lg border transition-colors ${useStore.getState().stickyPileMode ? 'bg-purple-500 text-white border-purple-500' : isDark ? 'bg-gray-700 text-gray-300 border-gray-600' : 'bg-gray-50 text-gray-600 border-gray-300'}`}
+                            onClick={() => setStickyPileMode(!stickyPileMode)}
+                            className={`px-2 py-1 text-[10px] rounded-lg border transition-colors ${stickyPileMode ? 'bg-purple-500 text-white border-purple-500' : isDark ? 'bg-gray-700 text-gray-300 border-gray-600' : 'bg-gray-50 text-gray-600 border-gray-300'}`}
                         >
-                            {useStore.getState().stickyPileMode ? '📚 Pile ON' : '📝 Single'}
+                            {stickyPileMode ? '📚 Pile ON' : '📝 Single'}
                         </button>
-                        <div className="w-4 h-4 rounded border border-gray-300" style={{ backgroundColor: useStore.getState().stickyColor }} title="Selected color" />
+                        <div className="w-4 h-4 rounded border border-gray-300" style={{ backgroundColor: stickyColor }} title="Selected color" />
                     </div>
 
                     {/* Visual pile of 25 sticky notes */}
                     <div className="relative mb-3" style={{ height: '120px' }}>
-                        {Array.from({ length: 25 }).map((_, i) => {
+                        {STICKY_ROTATIONS.map((rotation, i) => {
                             const color = STICKY_COLORS[i % STICKY_COLORS.length];
-                            const row = Math.floor(i / 5);
-                            const col = i % 5;
-                            const rotation = stickyRotations[i];
                             return (
                                 <button
                                     key={i}
@@ -608,8 +699,8 @@ export default function Toolbar() {
                                         backgroundColor: color,
                                         borderRadius: '3px',
                                         boxShadow: '1px 1px 3px rgba(0,0,0,0.15)',
-                                        left: `${col * 38}px`,
-                                        top: `${row * 22}px`,
+                                        left: `${(i % 5) * 38}px`,
+                                        top: `${Math.floor(i / 5) * 22}px`,
                                         transform: `rotate(${rotation}deg)`,
                                         zIndex: i,
                                     }}
@@ -632,155 +723,49 @@ export default function Toolbar() {
                             />
                         ))}
                     </div>
-                </div>
+                </ToolPopup>
             )}
 
-            {/* Unified Media Modal */}
-            {showMediaModal && (
-                <UnifiedMediaModal onClose={() => setShowMediaModal(false)} />
-            )}
-
-            {/* Shape Popup with ColorPalette */}
-            {activePopup === 'shape' && (
-                <div
-                    className={`fixed rounded-xl shadow-xl border p-3 z-50 ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
-                    style={{
-                        left: 'clamp(58px, 4vw + 2vh, 70px)',
-                        top: shapeBtnRef.current ? `${Math.min(shapeBtnRef.current.getBoundingClientRect().top, window.innerHeight - 500)}px` : '50%',
-                        width: '240px',
-                        maxHeight: 'calc(100vh - 40px)',
-                        overflowY: 'auto',
-                        scrollbarWidth: 'thin',
-                    }}
-                >
-                    {/* Shapes Grid */}
+            {/* Shape Popup */}
+            {activePopup?.name === 'shape' && (
+                <ToolPopup anchorTop={activePopup.anchorTop} isDark={isDark} width={240} reserve={500}>
                     <div className={`text-xs mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Shapes</div>
-                    <div className="grid grid-cols-4 gap-2 mb-3">
-                        {shapeOptions.map(opt => (
-                            <button
-                                key={opt.id}
-                                onClick={() => handleShapeSelect(opt.id)}
-                                className={cn(
-                                    "w-10 h-10 flex items-center justify-center rounded-lg transition-all border-2",
-                                    shapeType === opt.id
-                                        ? "bg-purple-100 text-purple-600 border-purple-400"
-                                        : isDark ? "hover:bg-gray-700 border-transparent text-gray-300" : "hover:bg-gray-100 border-transparent text-gray-700"
-                                )}
-                                title={opt.label}
-                            >
-                                <opt.Icon className="w-6 h-6" />
-                            </button>
-                        ))}
-                    </div>
+                    <ShapeGrid options={shapeOptions} selectedId={shapeType} isDark={isDark} onSelect={handleShapeSelect} />
 
-                    {/* Lines */}
                     <div className={`text-xs mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Lines</div>
-                    <div className="grid grid-cols-4 gap-2 mb-3">
-                        {lineOptions.map(opt => (
-                            <button
-                                key={opt.id}
-                                onClick={() => handleShapeSelect(opt.id)}
-                                className={cn(
-                                    "w-10 h-10 flex items-center justify-center rounded-lg transition-all border-2",
-                                    shapeType === opt.id
-                                        ? "bg-purple-100 text-purple-600 border-purple-400"
-                                        : isDark ? "hover:bg-gray-700 border-transparent text-gray-300" : "hover:bg-gray-100 border-transparent text-gray-700"
-                                )}
-                                title={opt.label}
-                            >
-                                <opt.Icon className="w-6 h-6" />
-                            </button>
-                        ))}
-                    </div>
+                    <ShapeGrid options={lineOptions} selectedId={shapeType} isDark={isDark} onSelect={handleShapeSelect} />
 
-                    {/* Object Stroke Width */}
-                    <div className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Stroke Width</div>
-                    <input
-                        type="range"
-                        min="0"
-                        max="10"
-                        value={objectStrokeWidth}
-                        onChange={(e) => setObjectStrokeWidth(Number(e.target.value))}
-                        className="w-full h-1.5 accent-purple-500"
-                    />
-                    <div className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{objectStrokeWidth}px</div>
+                    <SliderControl label="Stroke Width" min={0} max={10} value={objectStrokeWidth} onChange={setObjectStrokeWidth} isDark={isDark} />
 
                     <div className={`h-px my-2 ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} />
 
-                    {/* Corner Radius */}
-                    <div className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Corner Radius</div>
-                    <input
-                        type="range"
-                        min="0"
-                        max="50"
-                        value={cornerRadius}
-                        onChange={(e) => setCornerRadius(Number(e.target.value))}
-                        className="w-full h-1.5 accent-purple-500"
-                    />
-                    <div className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{cornerRadius}px</div>
-                </div>
+                    <SliderControl label="Corner Radius" min={0} max={50} value={cornerRadius} onChange={setCornerRadius} isDark={isDark} />
+                </ToolPopup>
             )}
 
-            {/* Pen Popup with ColorPalette */}
-            {activePopup === 'pen' && (
-                <div
-                    className={`fixed rounded-xl shadow-xl border p-3 z-50 ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
-                    style={{
-                        left: 'clamp(58px, 4vw + 2vh, 70px)',
-                        top: penBtnRef.current ? `${penBtnRef.current.getBoundingClientRect().top}px` : '50%',
-                        width: '220px',
-                        maxHeight: 'calc(100vh - 40px)',
-                        overflowY: 'auto',
-                        scrollbarWidth: 'thin',
-                    }}
-                >
-                    <ColorPalette selectedColor={strokeColor} onColorSelect={setStrokeColor} title="Pen Color" />
-
+            {/* Pen Popup */}
+            {activePopup?.name === 'pen' && (
+                <ToolPopup anchorTop={activePopup.anchorTop} isDark={isDark} reserve={380}>
+                    <ColorPalette selectedColor={strokeColor} onColorSelect={setStrokeColor} title="Pen Color" showEyedropper={false} />
                     <div className={`h-px my-2 ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} />
-
-                    {/* Pen Stroke Width (independent) */}
-                    <div className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Pen Width</div>
-                    <input
-                        type="range"
-                        min="1"
-                        max="20"
-                        value={penStrokeWidth}
-                        onChange={(e) => setPenStrokeWidth(Number(e.target.value))}
-                        className="w-full h-1.5 accent-purple-500"
-                    />
-                    <div className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{penStrokeWidth}px</div>
-                </div>
+                    <SliderControl label="Pen Width" min={1} max={20} value={penStrokeWidth} onChange={setPenStrokeWidth} isDark={isDark} />
+                </ToolPopup>
             )}
 
-            {/* Highlighter Popup with ColorPalette */}
-            {activePopup === 'highlighter' && (
-                <div
-                    className={`fixed rounded-xl shadow-xl border p-3 z-50 ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}
-                    style={{
-                        left: 'clamp(58px, 4vw + 2vh, 70px)',
-                        top: highlighterBtnRef.current ? `${highlighterBtnRef.current.getBoundingClientRect().top}px` : '50%',
-                        width: '220px',
-                        maxHeight: 'calc(100vh - 40px)',
-                        overflowY: 'auto',
-                        scrollbarWidth: 'thin',
-                    }}
-                >
-                    <ColorPalette selectedColor={highlighterColor} onColorSelect={setHighlighterColor} title="Highlighter Color" />
-
+            {/* Highlighter Popup */}
+            {activePopup?.name === 'highlighter' && (
+                <ToolPopup anchorTop={activePopup.anchorTop} isDark={isDark} reserve={380}>
+                    <ColorPalette selectedColor={highlighterColor} onColorSelect={setHighlighterColor} title="Highlighter Color" showEyedropper={false} />
                     <div className={`h-px my-2 ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} />
+                    <SliderControl label="Highlighter Width" min={2} max={50} value={highlighterStrokeWidth} onChange={setHighlighterStrokeWidth} isDark={isDark} />
+                </ToolPopup>
+            )}
 
-                    {/* Highlighter Stroke Width (independent) */}
-                    <div className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Highlighter Width</div>
-                    <input
-                        type="range"
-                        min="2"
-                        max="50"
-                        value={highlighterStrokeWidth}
-                        onChange={(e) => setHighlighterStrokeWidth(Number(e.target.value))}
-                        className="w-full h-1.5 accent-purple-500"
-                    />
-                    <div className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>{highlighterStrokeWidth}px</div>
-                </div>
+            {/* Laser Pointer Popup */}
+            {activePopup?.name === 'laser' && (
+                <ToolPopup anchorTop={activePopup.anchorTop} isDark={isDark} reserve={120}>
+                    <SliderControl label="Laser Thickness" min={1} max={20} value={laserStrokeWidth} onChange={setLaserStrokeWidth} isDark={isDark} />
+                </ToolPopup>
             )}
         </div>
     );

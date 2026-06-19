@@ -10,6 +10,9 @@ const DEFAULT_BOARD_NAMES = Array.from({ length: 6 }, (_, i) => `Board ${i + 1}`
 const getBoardStorageKey = (boardId) => `${LOCAL_STORAGE_KEY_PREFIX}${boardId}`;
 const MAX_HISTORY = 50;
 
+// Shallow clone of nodes (deep-copies points arrays, avoids copying base64 strings)
+const cloneNodes = (nodes) => nodes.map(node => (node.points ? { ...node, points: [...node.points] } : { ...node }));
+
 // Debounce helper
 let saveTimeout = null;
 const debounceSave = (fn, delay = 500) => {
@@ -52,7 +55,7 @@ const loadMediaFromDB = async (nodeId) => {
             request.onsuccess = () => res(request.result || null);
             request.onerror = () => res(null);
         });
-    } catch (e) {
+    } catch {
         return null;
     }
 };
@@ -157,14 +160,14 @@ const loadBoardNames = () => {
     try {
         const raw = localStorage.getItem(BOARD_NAMES_KEY);
         if (raw) return JSON.parse(raw);
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
     return [...DEFAULT_BOARD_NAMES];
 };
 
 const saveBoardNames = (names) => {
     try {
         localStorage.setItem(BOARD_NAMES_KEY, JSON.stringify(names));
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
 };
 
 // Load/save current board ID
@@ -176,14 +179,14 @@ const loadCurrentBoardId = () => {
             const names = loadBoardNames();
             if (id >= 0 && id < names.length) return id;
         }
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
     return 0;
 };
 
 const saveCurrentBoardId = (id) => {
     try {
         localStorage.setItem(CURRENT_BOARD_KEY, String(id));
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
 };
 
 const useStore = create((set, get) => ({
@@ -206,6 +209,7 @@ const useStore = create((set, get) => ({
     strokeColor: '#1e40af',
     penStrokeWidth: 2,
     highlighterStrokeWidth: 20,
+    laserStrokeWidth: 3,
     objectStrokeWidth: 2,
     textColor: '#000000',
     textFontFamily: 'Arial',
@@ -245,10 +249,11 @@ const useStore = create((set, get) => ({
     canRedo: () => get().historyIndex < get().history.length - 1,
 
     // --- History management ---
+    // Snapshots are taken AFTER each mutation, so history[historyIndex]
+    // always mirrors the current state and redo can restore the newest state.
     pushToHistory: () => {
         const { nodes, history, historyIndex } = get();
-        // Shallow clone avoiding deep copy of base64 strings
-        const snapshot = nodes.map(node => (node.points ? { ...node, points: [...node.points] } : { ...node }));
+        const snapshot = cloneNodes(nodes);
         // Discard any future states if we branched
         const newHistory = history.slice(0, historyIndex + 1);
         newHistory.push(snapshot);
@@ -263,8 +268,7 @@ const useStore = create((set, get) => ({
         const { history, historyIndex } = get();
         if (historyIndex <= 0) return;
         const newIndex = historyIndex - 1;
-        const snapshot = history[newIndex].map(node => (node.points ? { ...node, points: [...node.points] } : { ...node }));
-        set({ nodes: snapshot, historyIndex: newIndex, selectedNodeIds: [], hasUnsavedChanges: true });
+        set({ nodes: cloneNodes(history[newIndex]), historyIndex: newIndex, selectedNodeIds: [], hasUnsavedChanges: true });
         saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
@@ -273,8 +277,7 @@ const useStore = create((set, get) => ({
         const { history, historyIndex } = get();
         if (historyIndex >= history.length - 1) return;
         const newIndex = historyIndex + 1;
-        const snapshot = history[newIndex].map(node => (node.points ? { ...node, points: [...node.points] } : { ...node }));
-        set({ nodes: snapshot, historyIndex: newIndex, selectedNodeIds: [], hasUnsavedChanges: true });
+        set({ nodes: cloneNodes(history[newIndex]), historyIndex: newIndex, selectedNodeIds: [], hasUnsavedChanges: true });
         saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
@@ -287,6 +290,7 @@ const useStore = create((set, get) => ({
     setStrokeColor: (color) => set({ strokeColor: color }),
     setPenStrokeWidth: (width) => set({ penStrokeWidth: width }),
     setHighlighterStrokeWidth: (width) => set({ highlighterStrokeWidth: width }),
+    setLaserStrokeWidth: (width) => set({ laserStrokeWidth: width }),
     setObjectStrokeWidth: (width) => set({ objectStrokeWidth: width }),
     setTextColor: (color) => set({ textColor: color }),
     setTextFontFamily: (family) => set({ textFontFamily: family }),
@@ -296,33 +300,58 @@ const useStore = create((set, get) => ({
     setBoardSearch: (search) => set({ boardSearch: search }),
 
     addNode: (nodeData) => {
-        get().pushToHistory();
         const newNode = { id: uuidv4(), ...nodeData };
         set((state) => ({ nodes: [...state.nodes, newNode], hasUnsavedChanges: true }));
+        get().pushToHistory();
         saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
         return newNode.id;
     },
 
     updateNode: (id, updates) => {
-        get().pushToHistory();
         set((state) => ({
             nodes: state.nodes.map((node) =>
                 node.id === id ? { ...node, ...updates } : node
             ),
             hasUnsavedChanges: true,
         }));
+        get().pushToHistory();
+        saveToLocalStorageSync(get());
+        debounceSave(() => get().syncSave());
+    },
+
+    // --- Transient drawing (pen/highlighter strokes) ---
+    // A stroke generates hundreds of mousemove updates; recording history and
+    // serializing the board per point would flood undo and hammer localStorage.
+    // The stroke is added/extended transiently and committed once on mouseup.
+    beginStrokeNode: (nodeData) => {
+        const newNode = { id: uuidv4(), ...nodeData };
+        set((state) => ({ nodes: [...state.nodes, newNode], hasUnsavedChanges: true }));
+        return newNode.id;
+    },
+
+    updateNodeTransient: (id, updates) => {
+        set((state) => ({
+            nodes: state.nodes.map((node) =>
+                node.id === id ? { ...node, ...updates } : node
+            ),
+            hasUnsavedChanges: true,
+        }));
+    },
+
+    commitTransient: () => {
+        get().pushToHistory();
         saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
 
     deleteNode: (id) => {
-        get().pushToHistory();
         set((state) => ({
             nodes: state.nodes.filter((node) => node.id !== id),
             selectedNodeIds: state.selectedNodeIds.filter((nodeId) => nodeId !== id),
             hasUnsavedChanges: true,
         }));
+        get().pushToHistory();
         saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
@@ -353,19 +382,19 @@ const useStore = create((set, get) => ({
     },
 
     deleteSelectedNodes: () => {
-        get().pushToHistory();
         set((state) => ({
             nodes: state.nodes.filter((node) => !state.selectedNodeIds.includes(node.id)),
             selectedNodeIds: [],
             hasUnsavedChanges: true,
         }));
+        get().pushToHistory();
         saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
 
     deleteAllNodes: () => {
-        get().pushToHistory();
         set({ nodes: [], selectedNodeIds: [], hasUnsavedChanges: true });
+        get().pushToHistory();
         saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
@@ -393,7 +422,7 @@ const useStore = create((set, get) => ({
                 boardNames,
                 stagePosition: localData.stagePosition || { x: 0, y: 0 },
                 stageScale: localData.stageScale || 1,
-                history: [nodes.map(node => (node.points ? { ...node, points: [...node.points] } : { ...node }))],
+                history: [cloneNodes(nodes)],
                 historyIndex: 0,
             });
         } else {
@@ -410,17 +439,18 @@ const useStore = create((set, get) => ({
         // Save current board
         await saveToLocalStorage(state, state.currentBoardId);
 
-        // Load target board
+        // Load target board (comments included — otherwise they leak across boards)
         const localData = await loadFromLocalStorage(targetBoardId);
-        const nodes = localData ? (localData.nodes || []) : [];
+        const nodes = localData?.nodes || [];
 
         set({
             currentBoardId: targetBoardId,
             nodes,
+            comments: localData?.comments || [],
             selectedNodeIds: [],
-            stagePosition: localData ? (localData.stagePosition || { x: 0, y: 0 }) : { x: 0, y: 0 },
-            stageScale: localData ? (localData.stageScale || 1) : 1,
-            history: [nodes.map(node => (node.points ? { ...node, points: [...node.points] } : { ...node }))],
+            stagePosition: localData?.stagePosition || { x: 0, y: 0 },
+            stageScale: localData?.stageScale || 1,
+            history: [cloneNodes(nodes)],
             historyIndex: 0,
             hasUnsavedChanges: false,
             tool: 'select',
@@ -449,13 +479,46 @@ const useStore = create((set, get) => ({
         const { boardNames, currentBoardId } = get();
         if (boardNames.length <= 1) return; // Keep at least 1 board
         const names = boardNames.filter((_, i) => i !== boardId);
-        // Remove stored data for this board
-        try { localStorage.removeItem(getBoardStorageKey(boardId)); } catch (e) { /* ignore */ }
-        const newCurrentId = currentBoardId >= names.length ? names.length - 1 : (currentBoardId > boardId ? currentBoardId - 1 : currentBoardId);
-        set({ boardNames: names });
+
+        // Boards are keyed by index, so all boards after the deleted one
+        // must shift their stored data down by one slot
+        try {
+            for (let i = boardId + 1; i < boardNames.length; i++) {
+                const data = localStorage.getItem(getBoardStorageKey(i));
+                if (data !== null) {
+                    localStorage.setItem(getBoardStorageKey(i - 1), data);
+                } else {
+                    localStorage.removeItem(getBoardStorageKey(i - 1));
+                }
+            }
+            localStorage.removeItem(getBoardStorageKey(boardNames.length - 1));
+        } catch { /* ignore */ }
         saveBoardNames(names);
-        if (newCurrentId !== currentBoardId || boardId === currentBoardId) {
-            await get().switchBoard(Math.min(newCurrentId, names.length - 1));
+
+        if (boardId === currentBoardId) {
+            // Load the board that now occupies this slot (or the new last board)
+            const targetId = Math.min(boardId, names.length - 1);
+            const localData = await loadFromLocalStorage(targetId);
+            const nodes = localData?.nodes || [];
+            set({
+                boardNames: names,
+                currentBoardId: targetId,
+                nodes,
+                comments: localData?.comments || [],
+                selectedNodeIds: [],
+                stagePosition: localData?.stagePosition || { x: 0, y: 0 },
+                stageScale: localData?.stageScale || 1,
+                history: [cloneNodes(nodes)],
+                historyIndex: 0,
+                hasUnsavedChanges: false,
+                tool: 'select',
+            });
+            saveCurrentBoardId(targetId);
+        } else {
+            // Same board stays active; only its index may have shifted
+            const newCurrentId = currentBoardId > boardId ? currentBoardId - 1 : currentBoardId;
+            set({ boardNames: names, currentBoardId: newCurrentId });
+            saveCurrentBoardId(newCurrentId);
         }
     },
 
@@ -475,17 +538,20 @@ const useStore = create((set, get) => ({
     pasteNodes: (offsetX = 30, offsetY = 30) => {
         const { clipboard } = get();
         if (clipboard.length === 0) return;
+        // Offset via x/y only — points stay relative to the node origin
+        const pasted = clipboard.map(n => ({
+            ...n,
+            id: uuidv4(),
+            x: (n.x || 0) + offsetX,
+            y: (n.y || 0) + offsetY,
+            ...(n.points ? { points: [...n.points] } : {}),
+        }));
+        set(state => ({
+            nodes: [...state.nodes, ...pasted],
+            selectedNodeIds: pasted.map(n => n.id),
+            hasUnsavedChanges: true,
+        }));
         get().pushToHistory();
-        const newIds = [];
-        clipboard.forEach(n => {
-            const newNode = { ...n, id: uuidv4(), x: (n.x || 0) + offsetX, y: (n.y || 0) + offsetY };
-            if (newNode.points) {
-                newNode.points = newNode.points.map((p, i) => p + (i % 2 === 0 ? offsetX : offsetY));
-            }
-            set(state => ({ nodes: [...state.nodes, newNode] }));
-            newIds.push(newNode.id);
-        });
-        set({ selectedNodeIds: newIds, hasUnsavedChanges: true });
         saveToLocalStorageSync(get());
         debounceSave(() => get().syncSave());
     },
@@ -548,7 +614,6 @@ const useStore = create((set, get) => ({
 
     // --- Z-Order ---
     bringToFront: (nodeId) => {
-        get().pushToHistory();
         set((state) => {
             const idx = state.nodes.findIndex(n => n.id === nodeId);
             if (idx === -1) return state;
@@ -556,10 +621,10 @@ const useStore = create((set, get) => ({
             const rest = state.nodes.filter((_, i) => i !== idx);
             return { nodes: [...rest, node], hasUnsavedChanges: true };
         });
+        get().pushToHistory();
         saveToLocalStorageSync(get());
     },
     sendToBack: (nodeId) => {
-        get().pushToHistory();
         set((state) => {
             const idx = state.nodes.findIndex(n => n.id === nodeId);
             if (idx === -1) return state;
@@ -567,10 +632,10 @@ const useStore = create((set, get) => ({
             const rest = state.nodes.filter((_, i) => i !== idx);
             return { nodes: [node, ...rest], hasUnsavedChanges: true };
         });
+        get().pushToHistory();
         saveToLocalStorageSync(get());
     },
     duplicateNode: (nodeId) => {
-        get().pushToHistory();
         const node = get().nodes.find(n => n.id === nodeId);
         if (!node) return;
         const newNode = { ...node, id: uuidv4(), x: (node.x || 0) + 30, y: (node.y || 0) + 30 };
@@ -578,6 +643,7 @@ const useStore = create((set, get) => ({
             newNode.points = [...newNode.points];
         }
         set((state) => ({ nodes: [...state.nodes, newNode], hasUnsavedChanges: true }));
+        get().pushToHistory();
         saveToLocalStorageSync(get());
     },
 
@@ -595,7 +661,7 @@ const useStore = create((set, get) => ({
     toggleTheme: () => {
         const newTheme = get().theme === 'light' ? 'dark' : 'light';
         set({ theme: newTheme });
-        try { localStorage.setItem('kot_theme', newTheme); } catch { }
+        try { localStorage.setItem('kot_theme', newTheme); } catch { /* ignore */ }
     },
 }));
 
@@ -613,7 +679,7 @@ if (typeof window !== 'undefined') {
             localStorage.setItem(getBoardStorageKey(0), oldData);
             localStorage.removeItem('kot_state');
         }
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
 }
 
 export { loadMediaFromDB, saveMediaToDB };

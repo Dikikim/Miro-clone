@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The text/sticky editor is a transparent textarea laid over the live-rendered
+   Konva text. Keep its text transparent even when selected, otherwise the
+   browser paints the selected glyphs on top and they double up over the canvas
+   text. Only the selection highlight shows. */
+textarea[data-text-editor="true"]::selection { color: transparent; background: rgba(59, 130, 246, 0.35); }
+textarea[data-text-editor="true"]::-moz-selection { color: transparent; background: rgba(59, 130, 246, 0.35); }
+
 @layer base {
   :root {
     /* Colors - Modern dark theme for KOT */
@@ -116,10 +123,65 @@
   }
 }
 
-/* Magic Navigation Menu Styles */
-.magic-nav {
-  --indicator-color: #4a90d9;
-  --nav-bg: #ffffff;
+/* ── iOS-style liquid glass surfaces ─────────────────────────────
+   Used by the main toolbar, header/board menu and zoom controls.
+   Dropdowns/popups must stay opaque — use .popup-solid(-dark). */
+.glass-panel,
+.glass-panel-dark {
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  transition: background 0.25s ease, border-color 0.25s ease;
+}
+
+.glass-panel {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.66) 0%, rgba(255, 255, 255, 0.44) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow:
+    0 8px 32px rgba(31, 38, 135, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.glass-panel-dark {
+  background: linear-gradient(135deg, rgba(50, 50, 54, 0.62) 0%, rgba(28, 28, 30, 0.52) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+/* Small interactive glass chips (e.g. board switcher trigger) */
+.glass-chip {
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  transition: background 0.2s ease;
+}
+
+.glass-chip:hover {
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.glass-chip-dark {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  transition: background 0.2s ease;
+}
+
+.glass-chip-dark:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* Opaque dropdown/popup surfaces — never transparent */
+.popup-solid {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.popup-solid-dark {
+  background: #1f2937;
+  border: 1px solid #374151;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .magic-nav-section {
@@ -139,6 +201,25 @@
 
 .magic-nav-label {
   transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* Thin gradient accent edge (the active-tool "circle" colours) for menus in
+   dark mode. Drawn as a masked overlay so it follows the menu's border-radius
+   and never overrides the (often glassy) background. The host must establish a
+   positioning context itself (relative/absolute) — this rule deliberately does
+   NOT set `position`, so it can't clobber an already-positioned popup. */
+.menu-accent-edge::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, #7b5ea7, #4a90d9, #2ec4b6);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  pointer-events: none;
+  z-index: 2;
 }
 
 /* Hide scrollbar for magic-nav */
