@@ -184,7 +184,7 @@ export default function ShapeToolbar({ nodeId, position }) {
 
     return (
         <div ref={toolbarRef} style={toolbarStyle} onMouseDown={(e) => e.stopPropagation()}>
-            <div className={`relative flex items-center gap-0.5 px-1.5 py-1 rounded-xl shadow-lg border ${isDark ? 'bg-gray-800 border-transparent menu-accent-edge' : 'bg-white border-gray-200'}`}>
+            <div className={`relative flex items-center gap-0.5 px-1.5 py-1 rounded-xl shadow-lg border border-transparent menu-accent-edge ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
 
                 {/* Fill Color (not for lines) */}
                 {!isLine && (

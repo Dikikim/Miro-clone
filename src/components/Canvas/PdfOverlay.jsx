@@ -990,9 +990,10 @@ function ExtractPagesModal({ node, onClose, addNode }) {
         inputCls: isDark ? 'border-white/15' : 'border-gray-300',
         inputStyle: isDark ? { color: '#e5e7eb', backgroundColor: '#23262f' } : { color: '#1a1a1a', backgroundColor: '#ffffff' },
     };
-    const panelStyle = isDark
-        ? { width: '70vw', height: '70vh', border: '1px solid transparent', background: 'linear-gradient(#181a21,#181a21) padding-box, linear-gradient(135deg,#7b5ea7,#4a90d9,#2ec4b6) border-box' }
-        : { width: '70vw', height: '70vh' };
+    const panelStyle = {
+        width: '70vw', height: '70vh', border: '1px solid transparent',
+        background: `linear-gradient(${isDark ? '#181a21,#181a21' : '#ffffff,#ffffff'}) padding-box, linear-gradient(135deg,#7b5ea7,#4a90d9,#2ec4b6) border-box`,
+    };
 
     return (
         <>

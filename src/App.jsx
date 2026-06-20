@@ -14,6 +14,8 @@ import VideoUploader from './components/Upload/VideoUploader';
 import { useEffect, useState, useCallback } from 'react';
 import useStore from './store/useStore';
 
+if (typeof window !== 'undefined') window.__kotStore = useStore; // TEMP: verification handle
+
 function App() {
   const {
     tool, setTool, deleteSelectedNodes, selectedNodeIds, clearSelection,

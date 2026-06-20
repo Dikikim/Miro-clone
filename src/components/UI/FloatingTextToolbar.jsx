@@ -115,6 +115,9 @@ export default function FloatingTextToolbar({ nodeId, position }) {
     const isUnderline = node.textDecoration === 'underline';
     const isStrike = node.textDecoration === 'line-through';
     const currentColor = isSticky ? (node.textColor || '#1a1a1a') : (node.fill || '#000000');
+    // The "A" swatch shows the effective colour — default black text renders white
+    // in dark mode, so show it white here too (otherwise it's invisible on the bar).
+    const displayColor = (isDark && (currentColor === '#000000' || currentColor === '#1a1a1a')) ? '#ffffff' : currentColor;
 
     // Apply a per-character style transform to the selected range — or the whole
     // text when nothing is selected — for text AND sticky notes. Collapses back
@@ -222,16 +225,21 @@ export default function FloatingTextToolbar({ nodeId, position }) {
     const left = livePos.x;
     const top = Math.max(60, livePos.y - 54);
 
-    const sepCls = 'w-px h-5 bg-gray-200 mx-0.5 flex-shrink-0';
+    const sepCls = `w-px h-5 mx-0.5 flex-shrink-0 ${isDark ? 'bg-white/20' : 'bg-gray-200'}`;
     const btnBase = 'p-1.5 rounded transition-colors flex-shrink-0 flex items-center justify-center';
-    const btnIdle = 'hover:bg-gray-100 text-gray-600';
-    const btnActive = 'bg-purple-100 text-purple-600';
+    const btnIdle = isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-gray-600';
+    const btnActive = isDark ? 'bg-purple-500/40 text-white' : 'bg-purple-100 text-purple-600';
+    // Dropdown surface + item tokens (dark vs light)
+    const ddPanel = isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200';
+    const ddText = isDark ? 'text-white' : 'text-black';
+    const ddHover = isDark ? 'hover:bg-white/10' : 'hover:bg-gray-50';
+    const ddActive = isDark ? 'bg-purple-500/30 text-purple-200' : 'bg-purple-50 text-purple-600';
 
     return (
         <div
             ref={toolbarRef}
             data-floating-toolbar="true"
-            className={`fixed z-[1100] flex items-center gap-0.5 bg-white rounded-xl shadow-2xl border border-gray-200 px-2 py-1.5 ${isDark ? 'menu-accent-edge' : ''}`}
+            className={`fixed z-[1100] flex items-center gap-0.5 rounded-xl shadow-2xl border border-transparent px-2 py-1.5 menu-accent-edge ${isDark ? 'bg-gray-800' : 'bg-white'}`}
             style={{
                 left,
                 top,
@@ -249,7 +257,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                 <button
                     tabIndex={-1}
                     onClick={() => { setShowFontFamilies(v => !v); setShowFontSizes(false); setShowColorPicker(false); setShowMoreOptions(false); }}
-                    className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 text-sm text-black max-w-[110px]"
+                    className={`flex items-center gap-1 px-2 py-1 rounded text-sm max-w-[110px] ${ddText} ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
                 >
                     <span className="truncate" style={{ fontFamily: `'${currentFontFamily}', sans-serif` }}>
                         {currentFontFamily}
@@ -258,7 +266,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                 </button>
                 {showFontFamilies && (
                     <div
-                        className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-xl border border-gray-200 py-1 w-44 z-[160]"
+                        className={`absolute top-full left-0 mt-1 rounded-lg shadow-xl border py-1 w-44 z-[160] ${ddPanel}`}
                         style={{ maxHeight: '240px', overflowY: 'auto', overflowX: 'hidden', whiteSpace: 'normal' }}
                         onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}
                     >
@@ -268,7 +276,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                                 tabIndex={-1}
                                 onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
                                 onClick={() => { setFontFamilySel(font); setTextFontFamily(font); setShowFontFamilies(false); }}
-                                className={`w-full px-3 py-1.5 text-sm text-left hover:bg-gray-50 ${currentFontFamily === font ? 'bg-purple-50 text-purple-600 font-medium' : 'text-black'}`}
+                                className={`w-full px-3 py-1.5 text-sm text-left ${ddHover} ${currentFontFamily === font ? ddActive + ' font-medium' : ddText}`}
                                 style={{ fontFamily: `'${font}', sans-serif`, display: 'block', whiteSpace: 'nowrap' }}
                             >
                                 {font}
@@ -306,7 +314,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                                 e.stopPropagation();
                             }}
                             onMouseDown={(e) => e.stopPropagation()}
-                            className="w-[44px] text-sm text-black text-center border border-purple-400 rounded px-1 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-purple-400"
+                            className={`w-[44px] text-sm text-center border border-purple-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-purple-400 ${isDark ? 'text-white bg-gray-700' : 'text-black bg-white'}`}
                             style={{ appearance: 'textfield', MozAppearance: 'textfield', WebkitAppearance: 'none' }}
                         />
                     ) : (
@@ -314,7 +322,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                             tabIndex={-1}
                             onClick={() => { setShowFontSizes(v => !v); setShowFontFamilies(false); setShowColorPicker(false); setShowMoreOptions(false); }}
                             onDoubleClick={() => { setFontSizeInput(String(currentFontSize)); setFontSizeInputFocused(true); setShowFontSizes(false); }}
-                            className="flex items-center gap-0.5 px-1.5 py-1 rounded hover:bg-gray-100 text-sm text-black min-w-[38px] justify-center"
+                            className={`flex items-center gap-0.5 px-1.5 py-1 rounded text-sm min-w-[38px] justify-center ${ddText} ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
                         >
                             {currentFontSize}
                             <ChevronDown className="w-3 h-3 text-gray-400" />
@@ -322,7 +330,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                     )}
                     {showFontSizes && !fontSizeInputFocused && (
                         <div
-                            className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-xl border border-gray-200 py-1 w-16 z-[160]"
+                            className={`absolute top-full left-0 mt-1 rounded-lg shadow-xl border py-1 w-16 z-[160] ${ddPanel}`}
                             style={{ maxHeight: '200px', overflowY: 'auto', overflowX: 'hidden', whiteSpace: 'normal' }}
                             onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}
                         >
@@ -332,7 +340,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                                     tabIndex={-1}
                                     onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
                                     onClick={() => { setFontSizeSel(size); setTextFontSize(size); setShowFontSizes(false); }}
-                                    className={`w-full px-2 py-1 text-sm text-center hover:bg-gray-50 ${size === currentFontSize ? 'bg-purple-50 text-purple-600 font-medium' : 'text-black'}`}
+                                    className={`w-full px-2 py-1 text-sm text-center ${ddHover} ${size === currentFontSize ? ddActive + ' font-medium' : ddText}`}
                                     style={{ display: 'block', whiteSpace: 'nowrap' }}
                                 >
                                     {size}
@@ -378,12 +386,12 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                     title="Text Color"
                     style={{ minWidth: 28 }}
                 >
-                    <span className="text-sm font-bold leading-none" style={{ color: currentColor }}>A</span>
-                    <div className="w-4 h-1 rounded-full mt-0.5" style={{ backgroundColor: currentColor }} />
+                    <span className="text-sm font-bold leading-none" style={{ color: displayColor }}>A</span>
+                    <div className="w-4 h-1 rounded-full mt-0.5" style={{ backgroundColor: displayColor }} />
                 </button>
                 {showColorPicker && (
                     <div
-                        className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white rounded-xl shadow-xl border border-gray-200 p-3 z-[160] w-[220px]"
+                        className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 rounded-xl shadow-xl border p-3 z-[160] w-[220px] ${ddPanel}`}
                         onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}
                     >
                         <ColorPalette
@@ -416,7 +424,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                             <div className="w-4 h-4 rounded border border-gray-300" style={{ backgroundColor: node.fill || '#fef08a' }} />
                         </button>
                         {showStickyColor && (
-                            <div className="absolute top-full right-0 mt-2 bg-white rounded-xl shadow-xl border border-gray-200 p-2 z-[160] w-[136px]"
+                            <div className={`absolute top-full right-0 mt-2 rounded-xl shadow-xl border p-2 z-[160] w-[136px] ${ddPanel}`}
                                 onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}>
                                 <div className="grid grid-cols-4 gap-1.5 justify-items-center">
                                     {STICKY_BG_COLORS.map(c => (
@@ -433,12 +441,12 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                             onClick={() => { setShowEmoji(v => !v); setShowStickyColor(false); setShowColorPicker(false); setShowFontFamilies(false); setShowFontSizes(false); setShowMoreOptions(false); }}
                             className={`${btnBase} ${btnIdle} text-base`} title="Emoji">🙂</button>
                         {showEmoji && (
-                            <div className="absolute top-full right-0 mt-2 bg-white rounded-xl shadow-xl border border-gray-200 p-2 z-[160] w-[300px]"
+                            <div className={`absolute top-full right-0 mt-2 rounded-xl shadow-xl border p-2 z-[160] w-[300px] ${ddPanel}`}
                                 onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}>
                                 <div className="grid grid-cols-8 gap-0.5 max-h-[260px] overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
                                     {EMOJIS.map(em => (
                                         <button key={em} tabIndex={-1} onClick={() => insertEmoji(em)}
-                                            className="w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100 text-xl" title={em}>{em}</button>
+                                            className={`w-8 h-8 flex items-center justify-center rounded text-xl ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`} title={em}>{em}</button>
                                     ))}
                                 </div>
                             </div>
@@ -462,21 +470,21 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                 </button>
                 {showMoreOptions && (
                     <div
-                        className="absolute top-full right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-200 py-1 w-44 z-[160]"
+                        className={`absolute top-full right-0 mt-1 rounded-xl shadow-xl border py-1 w-44 z-[160] ${ddPanel}`}
                         onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}
                     >
                         <div className="px-3 py-1.5 text-xs text-gray-400 font-medium uppercase tracking-wide">List Style</div>
                         <button
                             tabIndex={-1}
                             onClick={() => handleListType('bullet')}
-                            className="w-full px-3 py-2 text-sm text-left flex items-center gap-2 hover:bg-gray-50 text-black"
+                            className={`w-full px-3 py-2 text-sm text-left flex items-center gap-2 ${ddHover} ${ddText}`}
                         >
                             <List className="w-4 h-4" /> Bullet List
                         </button>
                         <button
                             tabIndex={-1}
                             onClick={() => handleListType('number')}
-                            className="w-full px-3 py-2 text-sm text-left flex items-center gap-2 hover:bg-gray-50 text-black"
+                            className={`w-full px-3 py-2 text-sm text-left flex items-center gap-2 ${ddHover} ${ddText}`}
                         >
                             <ListOrdered className="w-4 h-4" /> Numbered List
                         </button>

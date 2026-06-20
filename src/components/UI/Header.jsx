@@ -7,7 +7,7 @@ export default function Header() {
 
     return (
         <header className="fixed top-0 left-0 right-0 h-14 z-50 flex items-center justify-end px-4 pointer-events-none">
-            <div className={`relative flex items-center gap-3 rounded-2xl px-4 py-2 pointer-events-auto ${isDark ? 'glass-panel-dark menu-accent-edge' : 'glass-panel'}`}>
+            <div className={`relative flex items-center gap-3 rounded-2xl px-4 py-2 pointer-events-auto menu-accent-edge ${isDark ? 'glass-panel-dark' : 'glass-panel'}`}>
                 <div className="h-9 w-9 overflow-hidden flex-shrink-0 flex items-center justify-center rounded-full" style={{ background: 'transparent' }}>
                     <img src="/logo/logo.jpg" alt="KKOT" className="h-full w-full object-cover" style={{ mixBlendMode: isDark ? 'screen' : 'multiply', transform: 'scale(1.35)' }} />
                 </div>

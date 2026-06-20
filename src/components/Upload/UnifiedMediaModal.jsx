@@ -109,7 +109,7 @@ export default function UnifiedMediaModal({ onClose }) {
     return (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[200] flex items-center justify-center" onClick={onClose}>
             <div
-                className={`relative rounded-xl shadow-2xl border p-5 w-[440px] max-w-[90vw] ${isDark ? 'bg-gray-800 border-transparent menu-accent-edge' : 'bg-white border-gray-200'}`}
+                className={`relative rounded-xl shadow-2xl border border-transparent p-5 w-[440px] max-w-[90vw] menu-accent-edge ${isDark ? 'bg-gray-800' : 'bg-white'}`}
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}

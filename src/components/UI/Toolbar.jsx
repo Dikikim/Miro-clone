@@ -84,7 +84,7 @@ function ToolPopup({ anchorTop, isDark, width = 220, reserve = 260, children }) 
         : '50%';
     return (
         <div
-            className={`fixed rounded-xl p-3 z-50 ${isDark ? 'popup-solid-dark menu-accent-edge' : 'popup-solid'}`}
+            className={`fixed rounded-xl p-3 z-50 menu-accent-edge ${isDark ? 'popup-solid-dark' : 'popup-solid'}`}
             style={{
                 left: 'clamp(58px, 4vw + 2vh, 70px)',
                 top,
@@ -287,7 +287,7 @@ function TimerWidget({ isDark }) {
             {showTimer && createPortal(
                 <div
                     ref={popupRef}
-                    className={`fixed rounded-xl p-3 z-[60] ${isDark ? 'popup-solid-dark menu-accent-edge' : 'popup-solid'}`}
+                    className={`fixed rounded-xl p-3 z-[60] menu-accent-edge ${isDark ? 'popup-solid-dark' : 'popup-solid'}`}
                     style={{
                         left: '58px',
                         top: '50%',
@@ -379,9 +379,7 @@ export default function Toolbar() {
         penStrokeWidth, setPenStrokeWidth,
         highlighterStrokeWidth, setHighlighterStrokeWidth,
         laserStrokeWidth, setLaserStrokeWidth,
-        objectStrokeWidth, setObjectStrokeWidth,
         highlighterColor, setHighlighterColor,
-        cornerRadius, setCornerRadius,
         nodes, selectedNodeIds, deleteAllNodes, deleteSelectedNodes,
         isSaving, isLoading, lastSaved,
         undo, redo, canUndo, canRedo,
@@ -457,7 +455,7 @@ export default function Toolbar() {
     return (
         <div className="fixed left-0 top-0 bottom-0 z-40 flex items-center" ref={popupRef}>
             <div
-                className={`magic-nav rounded-r-2xl border-l-0 flex flex-col my-2 ml-0 ${isDark ? 'glass-panel-dark menu-accent-edge' : 'glass-panel'}`}
+                className={`magic-nav rounded-r-2xl border-l-0 flex flex-col my-2 ml-0 menu-accent-edge ${isDark ? 'glass-panel-dark' : 'glass-panel'}`}
                 style={{
                     padding: '4px 0',
                     maxHeight: 'calc(100vh - 16px)',
@@ -734,12 +732,6 @@ export default function Toolbar() {
 
                     <div className={`text-xs mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Lines</div>
                     <ShapeGrid options={lineOptions} selectedId={shapeType} isDark={isDark} onSelect={handleShapeSelect} />
-
-                    <SliderControl label="Stroke Width" min={0} max={10} value={objectStrokeWidth} onChange={setObjectStrokeWidth} isDark={isDark} />
-
-                    <div className={`h-px my-2 ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} />
-
-                    <SliderControl label="Corner Radius" min={0} max={50} value={cornerRadius} onChange={setCornerRadius} isDark={isDark} />
                 </ToolPopup>
             )}
 

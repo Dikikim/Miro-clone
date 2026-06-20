@@ -97,7 +97,7 @@ export default function BoardSwitcher() {
             {/* Dropdown */}
             {isOpen && (
                 <div
-                    className={`absolute -right-4 top-full mt-2 rounded-xl py-1.5 z-[100] ${isDark ? 'popup-solid-dark menu-accent-edge' : 'popup-solid'}`}
+                    className={`absolute -right-4 top-full mt-2 rounded-xl py-1.5 z-[100] menu-accent-edge ${isDark ? 'popup-solid-dark' : 'popup-solid'}`}
                     style={{ width: '260px' }}
                 >
                     {/* Search */}

@@ -94,7 +94,7 @@ export default function BottomControls() {
 
     return (
         <div className="fixed bottom-3 right-3 z-40">
-            <div className={`relative flex items-center rounded-xl overflow-hidden ${isDark ? 'glass-panel-dark menu-accent-edge' : 'glass-panel'}`}>
+            <div className={`relative flex items-center rounded-xl overflow-hidden menu-accent-edge ${isDark ? 'glass-panel-dark' : 'glass-panel'}`}>
                 <button onClick={() => zoomTo(stageScale / 1.2)} className={btnCls} style={btnStyle} title="Zoom out">
                     <Minus className="w-4 h-4" />
                 </button>

@@ -44,10 +44,20 @@ function fitStickyFontSize(text, width, height, baseFontSize = 18) {
 // font, weight, decoration) as a Group of per-run <Text> elements, laid out line
 // by line with per-line height and baseline alignment. Used when colorSegments
 // holds more than one run; otherwise the plain single <Text> is used.
-function RichTextNode({ node, commonProps }) {
+// Default near-black text is invisible on the dark canvas → render it white in
+// dark mode (text + sticky notes). Explicit non-default colours are kept. Reads
+// the theme live so it stays correct inside memoised callbacks.
+function adaptTextFill(color, sticky) {
+    const c = color || (sticky ? '#1a1a1a' : '#000000');
+    const isDark = useStore.getState().theme === 'dark';
+    return (isDark && (c === '#000000' || c === '#1a1a1a')) ? '#ffffff' : c;
+}
+
+function RichTextNode({ node, commonProps, isDark }) {
     const text = node.text || '';
     const lineHeight = node.lineHeight || 1;
     const base = nodeBaseAttrs(node);
+    if (isDark && (base.fill === '#000000' || base.fill === '#1a1a1a')) base.fill = '#ffffff';
     const attrs = charAttrsFromSegments(node.colorSegments, text.length, base);
     const lines = text.split('\n');
 
@@ -426,7 +436,15 @@ export default function Whiteboard() {
         beginStrokeNode, updateNodeTransient, commitTransient,
         showContextMenu,
         addComment,
+        theme,
     } = useStore();
+
+    const isDarkTheme = theme === 'dark';
+    // Per-character base for rich (multi-colour) text, with its default fill adapted.
+    const adaptedBase = (n) => {
+        const b = nodeBaseAttrs(n);
+        return { ...b, fill: adaptTextFill(b.fill, n.type === 'sticky') };
+    };
 
     useEffect(() => {
         const handleResize = () => setStageSize({ width: window.innerWidth, height: window.innerHeight });
@@ -606,7 +624,7 @@ export default function Whiteboard() {
                         padding: 2px 4px;
                         background: transparent;
                         color: transparent;
-                        caret-color: ${textColor};
+                        caret-color: ${adaptTextFill(textColor, false)};
                         outline: none;
                         resize: none;
                         line-height: 1;
@@ -632,7 +650,7 @@ export default function Whiteboard() {
                         textarea.style.fontStyle = fs.includes('italic') ? 'italic' : 'normal';
                         textarea.style.fontFamily = `'${updatedNode.fontFamily || 'Arial'}', sans-serif`;
                         textarea.style.fontSize = `${(updatedNode.fontSize || 24) * stageScale}px`;
-                        textarea.style.caretColor = updatedNode.fill || '#000000';
+                        textarea.style.caretColor = adaptTextFill(updatedNode.fill, false);
                         autoExpand();
                     });
 
@@ -1025,7 +1043,7 @@ export default function Whiteboard() {
         const _ff = node.fontFamily || 'Arial';
         const _style = node.fontStyle || 'normal';
         // For sticky notes, use textColor; for text nodes, use fill
-        const _color = node.type === 'sticky' ? (node.textColor || '#1a1a1a') : (node.fill || '#000000');
+        const _color = adaptTextFill(node.type === 'sticky' ? node.textColor : node.fill, node.type === 'sticky');
         const _align = node.align || 'left';
         const _bold = _style.includes('bold');
         const _italic = _style.includes('italic');
@@ -1080,7 +1098,7 @@ export default function Whiteboard() {
             textarea.style.fontStyle = fs.includes('italic') ? 'italic' : 'normal';
             textarea.style.fontFamily = `'${updatedNode.fontFamily || 'Arial'}', sans-serif`;
             textarea.style.fontSize = `${(updatedNode.fontSize || 24) * stageScale}px`;
-            textarea.style.caretColor = updatedNode.type === 'sticky' ? (updatedNode.textColor || '#1a1a1a') : (updatedNode.fill || '#000000');
+            textarea.style.caretColor = adaptTextFill(updatedNode.type === 'sticky' ? updatedNode.textColor : updatedNode.fill, updatedNode.type === 'sticky');
             autoExpand();
         });
         let textareaRemoved = false;
@@ -1451,7 +1469,7 @@ export default function Whiteboard() {
                 const textListening = props.listening;
                 // Multi-colour text renders as a group of per-run Text elements
                 if (node.colorSegments && node.colorSegments.length > 1 && !node.textHighlight) {
-                    return <RichTextNode key={node.id} node={node} commonProps={props} />;
+                    return <RichTextNode key={node.id} node={node} commonProps={props} isDark={isDarkTheme} />;
                 }
                 if (node.textHighlight) {
                     return (
@@ -1471,7 +1489,7 @@ export default function Whiteboard() {
                                 y={node.y}
                                 text={node.text}
                                 fontSize={node.fontSize}
-                                fill={node.fill}
+                                fill={adaptTextFill(node.fill, false)}
                                 fontFamily={node.fontFamily || 'Arial'}
                                 fontStyle={node.fontStyle || 'normal'}
                                 textDecoration={node.textDecoration || ''}
@@ -1488,7 +1506,7 @@ export default function Whiteboard() {
                         y={node.y}
                         text={node.text}
                         fontSize={node.fontSize}
-                        fill={node.fill}
+                        fill={adaptTextFill(node.fill, false)}
                         fontFamily={node.fontFamily || 'Arial'}
                         fontStyle={node.fontStyle || 'normal'}
                         textDecoration={node.textDecoration || ''}
@@ -1548,8 +1566,8 @@ export default function Whiteboard() {
                             <Group x={pad} y={pad}>
                                 {wrappedRichRuns(
                                     stickyText,
-                                    charAttrsFromSegments(node.colorSegments, stickyText.length, nodeBaseAttrs(node)),
-                                    nodeBaseAttrs(node).fontSize,
+                                    charAttrsFromSegments(node.colorSegments, stickyText.length, adaptedBase(node)),
+                                    adaptedBase(node).fontSize,
                                     maxW
                                 )}
                             </Group>
@@ -1561,7 +1579,7 @@ export default function Whiteboard() {
                                 x={pad}
                                 y={pad}
                                 fontSize={stickyFontSize}
-                                fill={stickyText ? (node.textColor || '#1a1a1a') : '#aaa'}
+                                fill={stickyText ? adaptTextFill(node.textColor, true) : '#aaa'}
                                 fontFamily={node.fontFamily || 'Arial'}
                                 fontStyle={node.fontStyle || 'normal'}
                                 textDecoration={node.textDecoration || 'none'}
