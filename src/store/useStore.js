@@ -1,9 +1,13 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
+import { supabase } from '../lib/supabase';
+import * as boardsApi from '../lib/boardsApi';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'kot_state_board_';
-const BOARD_NAMES_KEY = 'kot_board_names';
+const BOARD_NAMES_KEY = 'kot_board_names';        // legacy (pre-cloud) board names
 const CURRENT_BOARD_KEY = 'kot_current_board';
+const BOARDS_CACHE_KEY = 'kot_boards';            // cached [{id,name}] for first paint
+const IMPORT_DONE_KEY = 'kot_cloud_import_done';  // one-time local→cloud import flag
 const MAX_BOARDS = 100;
 const DEFAULT_BOARD_NAMES = Array.from({ length: 6 }, (_, i) => `Board ${i + 1}`);
 
@@ -15,6 +19,10 @@ const cloneNodes = (nodes) => nodes.map(node => (node.points ? { ...node, points
 
 // Debounce helper
 let saveTimeout = null;
+// Guards loadData against concurrent invocation (React StrictMode fires the mount
+// effect twice in dev) — without it, two runs both see an empty cloud and import
+// the local boards twice, producing duplicate boards.
+let loadDataPromise = null;
 const debounceSave = (fn, delay = 500) => {
     if (saveTimeout) clearTimeout(saveTimeout);
     saveTimeout = setTimeout(fn, delay);
@@ -170,29 +178,119 @@ const saveBoardNames = (names) => {
     } catch { /* ignore */ }
 };
 
-// Load/save current board ID
+// Load/save current board ID (now a board UUID string)
 const loadCurrentBoardId = () => {
     try {
-        const raw = localStorage.getItem(CURRENT_BOARD_KEY);
-        if (raw !== null) {
-            const id = parseInt(raw, 10);
-            const names = loadBoardNames();
-            if (id >= 0 && id < names.length) return id;
-        }
-    } catch { /* ignore */ }
-    return 0;
+        return localStorage.getItem(CURRENT_BOARD_KEY) || null;
+    } catch { return null; }
 };
 
 const saveCurrentBoardId = (id) => {
     try {
-        localStorage.setItem(CURRENT_BOARD_KEY, String(id));
+        if (id) localStorage.setItem(CURRENT_BOARD_KEY, String(id));
     } catch { /* ignore */ }
 };
 
+// Cached board list [{id,name}] so the switcher paints instantly before the
+// cloud fetch resolves (offline-first).
+const loadBoardsCache = () => {
+    try { return JSON.parse(localStorage.getItem(BOARDS_CACHE_KEY) || '[]'); } catch { return []; }
+};
+const saveBoardsCache = (boards) => {
+    try { localStorage.setItem(BOARDS_CACHE_KEY, JSON.stringify(boards.map(b => ({ id: b.id, name: b.name })))); } catch { /* ignore */ }
+};
+
+// ── Cloud sync helpers ───────────────────────────────────────────────────
+// Strip large media to IndexedDB the same way saveToLocalStorageSync does, so
+// the cloud row stores a lightweight `__idb__<id>` ref (real media moves to
+// Supabase Storage in Phase 4). Keeps Postgres rows small.
+const stripNodeForStorage = (node) => {
+    let result = node;
+    if (result.src && result.src.length > LARGE_SRC_THRESHOLD) {
+        if (!result.src.startsWith('__idb__')) saveMediaToDB(result.id, result.src).catch(() => {});
+        result = { ...result, src: `__idb__${result.id}` };
+    }
+    if (result.coverSrc && result.coverSrc.length > LARGE_SRC_THRESHOLD) {
+        if (!result.coverSrc.startsWith('__idb__')) saveMediaToDB(`${result.id}_cover`, result.coverSrc).catch(() => {});
+        result = { ...result, coverSrc: `__idb__${result.id}_cover` };
+    }
+    return result;
+};
+const stripNodes = (nodes) => nodes.map(stripNodeForStorage);
+
+// Resolve `__idb__` media refs back to data URLs from IndexedDB after a cloud
+// fetch (media not present in this browser resolves to '' until Phase 4).
+const resolveMediaNodes = async (nodes) => Promise.all(nodes.map(async (node) => {
+    let result = node;
+    if (typeof result.src === 'string' && result.src.startsWith('__idb__')) {
+        result = { ...result, src: (await loadMediaFromDB(result.src.replace('__idb__', ''))) || '' };
+    }
+    if (typeof result.coverSrc === 'string' && result.coverSrc.startsWith('__idb__')) {
+        result = { ...result, coverSrc: (await loadMediaFromDB(result.coverSrc.replace('__idb__', ''))) || '' };
+    }
+    return result;
+}));
+
+// Per-board record of what we last pushed, so each save only sends the diff.
+const lastSyncedNodes = new Map();    // boardId -> Map(id -> jsonHash)
+const lastSyncedComments = new Map();
+const hashItem = (item) => JSON.stringify(item);
+
+const diffItems = (boardId, items, store) => {
+    const prev = store.get(boardId) || new Map();
+    const next = new Map();
+    const upserts = [];
+    for (const it of items) {
+        const h = hashItem(it);
+        next.set(it.id, h);
+        if (prev.get(it.id) !== h) upserts.push(it);
+    }
+    const deleteIds = [];
+    for (const id of prev.keys()) if (!next.has(id)) deleteIds.push(id);
+    store.set(boardId, next);
+    return { upserts, deleteIds };
+};
+const seedSynced = (boardId, items, store) => {
+    const m = new Map();
+    for (const it of items) m.set(it.id, hashItem(it));
+    store.set(boardId, m);
+};
+
+// One-time import of legacy localStorage boards into the cloud (runs on first
+// cloud login when the account has no boards yet).
+async function importLocalBoards() {
+    try {
+        if (localStorage.getItem(IMPORT_DONE_KEY)) return [];
+        const names = JSON.parse(localStorage.getItem(BOARD_NAMES_KEY) || 'null');
+        const created = [];
+        if (Array.isArray(names) && names.length) {
+            for (let i = 0; i < names.length; i++) {
+                const b = await boardsApi.createBoard(names[i] || `Board ${i + 1}`);
+                if (!b) continue;
+                created.push(b);
+                const raw = localStorage.getItem(getBoardStorageKey(i));
+                if (!raw) continue;
+                try {
+                    const data = JSON.parse(raw);
+                    const nodes = data.nodes || [];        // already in stripped __idb__ form
+                    const comments = data.comments || [];
+                    if (nodes.length) await boardsApi.pushNodes(b.id, nodes, []);
+                    if (comments.length) await boardsApi.pushComments(b.id, comments, []);
+                } catch (e) { console.error('[import] board', i, e); }
+            }
+        }
+        localStorage.setItem(IMPORT_DONE_KEY, '1');
+        return created;
+    } catch (e) {
+        console.error('[import] failed:', e);
+        return [];
+    }
+}
+
 const useStore = create((set, get) => ({
-    // Board management
+    // Board management — boards: [{ id (uuid), name }], currentBoardId: uuid
     currentBoardId: loadCurrentBoardId(),
-    boardNames: loadBoardNames(),
+    boards: loadBoardsCache(),
 
     // Canvas state
     nodes: [],
@@ -402,54 +500,97 @@ const useStore = create((set, get) => ({
     // --- Save (local only) ---
     syncSave: async () => {
         const state = get();
-        await saveToLocalStorage(state);
+        const boardId = state.currentBoardId;
+        // Always refresh the local cache first (offline-first).
+        await saveToLocalStorage(state, boardId);
         set({ hasUnsavedChanges: false, lastSaved: new Date().toISOString() });
+
+        // Then push the diff to Supabase (best-effort; RLS rejects writes to
+        // objects the user doesn't own, which is intended).
+        if (!boardId) return;
+        const uid = await boardsApi.getUserId();
+        if (!uid) return;
+        const strippedNodes = stripNodes(state.nodes);
+        const nodeDiff = diffItems(boardId, strippedNodes, lastSyncedNodes);
+        const commentDiff = diffItems(boardId, state.comments || [], lastSyncedComments);
+        await boardsApi.pushNodes(boardId, nodeDiff.upserts, nodeDiff.deleteIds);
+        await boardsApi.pushComments(boardId, commentDiff.upserts, commentDiff.deleteIds);
     },
 
     loadData: async () => {
+        if (loadDataPromise) return loadDataPromise;
+        loadDataPromise = (async () => {
         set({ isLoading: true });
+        const uid = await boardsApi.getUserId();
 
-        // Load board names
-        const boardNames = loadBoardNames();
-        const currentBoardId = get().currentBoardId;
-
-        const localData = await loadFromLocalStorage(currentBoardId);
-        if (localData) {
-            const nodes = localData.nodes || [];
-            set({
-                nodes,
-                comments: localData.comments || [],
-                boardNames,
-                stagePosition: localData.stagePosition || { x: 0, y: 0 },
-                stageScale: localData.stageScale || 1,
-                history: [cloneNodes(nodes)],
-                historyIndex: 0,
-            });
-        } else {
-            set({ boardNames, history: [[]], historyIndex: 0 });
+        // Not signed in (shouldn't happen behind the login gate) — local cache only.
+        if (!uid) {
+            set({ boards: loadBoardsCache(), history: [[]], historyIndex: 0, isLoading: false });
+            return;
         }
-        set({ isLoading: false });
+
+        let boards = await boardsApi.fetchBoards();
+        if (boards === null) {
+            // Network/RLS error — fall back to the cached board list.
+            boards = loadBoardsCache();
+        } else if (boards.length === 0) {
+            // First cloud login: import existing local boards once, else seed one.
+            boards = await importLocalBoards();
+            if (boards.length === 0) {
+                const b = await boardsApi.createBoard('Board 1');
+                boards = b ? [b] : [];
+            }
+        }
+        saveBoardsCache(boards);
+
+        const savedId = loadCurrentBoardId();
+        const currentBoardId = boards.find(b => b.id === savedId)?.id || boards[0]?.id || null;
+
+        let nodes = [], comments = [];
+        let stagePosition = { x: 0, y: 0 }, stageScale = 1;
+        if (currentBoardId) {
+            const content = await boardsApi.fetchBoardContent(currentBoardId);
+            nodes = await resolveMediaNodes(content.nodes);
+            comments = content.comments;
+            seedSynced(currentBoardId, content.nodes, lastSyncedNodes);
+            seedSynced(currentBoardId, content.comments, lastSyncedComments);
+            // Viewport is a local preference (not synced to the cloud in Phase 3).
+            const localBlob = await loadFromLocalStorage(currentBoardId);
+            stagePosition = localBlob?.stagePosition || stagePosition;
+            stageScale = localBlob?.stageScale || stageScale;
+            saveCurrentBoardId(currentBoardId);
+        }
+
+        set({
+            boards,
+            currentBoardId,
+            nodes,
+            comments,
+            stagePosition,
+            stageScale,
+            history: [cloneNodes(nodes)],
+            historyIndex: 0,
+            isLoading: false,
+        });
+        })();
+        try { return await loadDataPromise; } finally { loadDataPromise = null; }
     },
 
-    // --- Multi-board ---
-    switchBoard: async (targetBoardId) => {
-        if (targetBoardId === get().currentBoardId) return;
-        const state = get();
-
-        // Save current board
-        await saveToLocalStorage(state, state.currentBoardId);
-
-        // Load target board (comments included — otherwise they leak across boards)
-        const localData = await loadFromLocalStorage(targetBoardId);
-        const nodes = localData?.nodes || [];
-
+    // --- Multi-board (cloud-backed; boards keyed by UUID) ---
+    // Shared loader: pull a board's content from the cloud into the canvas.
+    _activateBoard: async (targetBoardId) => {
+        const content = await boardsApi.fetchBoardContent(targetBoardId);
+        const nodes = await resolveMediaNodes(content.nodes);
+        seedSynced(targetBoardId, content.nodes, lastSyncedNodes);
+        seedSynced(targetBoardId, content.comments, lastSyncedComments);
+        const localBlob = await loadFromLocalStorage(targetBoardId);
         set({
             currentBoardId: targetBoardId,
             nodes,
-            comments: localData?.comments || [],
+            comments: content.comments,
             selectedNodeIds: [],
-            stagePosition: localData?.stagePosition || { x: 0, y: 0 },
-            stageScale: localData?.stageScale || 1,
+            stagePosition: localBlob?.stagePosition || { x: 0, y: 0 },
+            stageScale: localBlob?.stageScale || 1,
             history: [cloneNodes(nodes)],
             historyIndex: 0,
             hasUnsavedChanges: false,
@@ -458,67 +599,46 @@ const useStore = create((set, get) => ({
         saveCurrentBoardId(targetBoardId);
     },
 
-    renameBoard: (boardId, name) => {
-        const names = [...get().boardNames];
-        names[boardId] = name;
-        set({ boardNames: names });
-        saveBoardNames(names);
+    switchBoard: async (targetBoardId) => {
+        if (targetBoardId === get().currentBoardId) return;
+        await get().syncSave();            // flush current board first
+        await get()._activateBoard(targetBoardId);
     },
 
-    addBoard: (name) => {
-        const names = [...get().boardNames];
-        if (names.length >= MAX_BOARDS) return null;
-        const newName = name || `Board ${names.length + 1}`;
-        names.push(newName);
-        set({ boardNames: names });
-        saveBoardNames(names);
-        return names.length - 1;
+    renameBoard: (boardId, name) => {
+        const next = get().boards.map(b => (b.id === boardId ? { ...b, name } : b));
+        set({ boards: next });
+        saveBoardsCache(next);
+        boardsApi.renameBoardCloud(boardId, name);
+    },
+
+    addBoard: async (name) => {
+        const boards = get().boards;
+        if (boards.length >= MAX_BOARDS) return null;
+        const b = await boardsApi.createBoard(name || `Board ${boards.length + 1}`);
+        if (!b) return null;
+        const next = [...boards, { id: b.id, name: b.name }];
+        set({ boards: next });
+        saveBoardsCache(next);
+        return b.id;
     },
 
     deleteBoard: async (boardId) => {
-        const { boardNames, currentBoardId } = get();
-        if (boardNames.length <= 1) return; // Keep at least 1 board
-        const names = boardNames.filter((_, i) => i !== boardId);
+        const { boards, currentBoardId } = get();
+        if (boards.length <= 1) return; // Keep at least 1 board
+        const next = boards.filter(b => b.id !== boardId);
 
-        // Boards are keyed by index, so all boards after the deleted one
-        // must shift their stored data down by one slot
-        try {
-            for (let i = boardId + 1; i < boardNames.length; i++) {
-                const data = localStorage.getItem(getBoardStorageKey(i));
-                if (data !== null) {
-                    localStorage.setItem(getBoardStorageKey(i - 1), data);
-                } else {
-                    localStorage.removeItem(getBoardStorageKey(i - 1));
-                }
-            }
-            localStorage.removeItem(getBoardStorageKey(boardNames.length - 1));
-        } catch { /* ignore */ }
-        saveBoardNames(names);
+        await boardsApi.deleteBoardCloud(boardId);  // cascade removes its nodes/comments
+        try { localStorage.removeItem(getBoardStorageKey(boardId)); } catch { /* ignore */ }
+        lastSyncedNodes.delete(boardId);
+        lastSyncedComments.delete(boardId);
 
+        set({ boards: next });
+        saveBoardsCache(next);
+
+        // If we deleted the active board, open another one.
         if (boardId === currentBoardId) {
-            // Load the board that now occupies this slot (or the new last board)
-            const targetId = Math.min(boardId, names.length - 1);
-            const localData = await loadFromLocalStorage(targetId);
-            const nodes = localData?.nodes || [];
-            set({
-                boardNames: names,
-                currentBoardId: targetId,
-                nodes,
-                comments: localData?.comments || [],
-                selectedNodeIds: [],
-                stagePosition: localData?.stagePosition || { x: 0, y: 0 },
-                stageScale: localData?.stageScale || 1,
-                history: [cloneNodes(nodes)],
-                historyIndex: 0,
-                hasUnsavedChanges: false,
-                tool: 'select',
-            });
-            saveCurrentBoardId(targetId);
-        } else {
-            // Same board stays active; only its index may have shifted
-            const newCurrentId = currentBoardId > boardId ? currentBoardId - 1 : currentBoardId;
-            set({ boardNames: names, currentBoardId: newCurrentId });
-            saveCurrentBoardId(newCurrentId);
+            await get()._activateBoard(next[0].id);
         }
     },
 
@@ -587,6 +707,7 @@ const useStore = create((set, get) => ({
             hasUnsavedChanges: true,
         }));
         saveToLocalStorageSync(get());
+        debounceSave(() => get().syncSave());
     },
 
     resolveComment: (commentId) => {
@@ -597,6 +718,7 @@ const useStore = create((set, get) => ({
             hasUnsavedChanges: true,
         }));
         saveToLocalStorageSync(get());
+        debounceSave(() => get().syncSave());
     },
 
     deleteComment: (commentId) => {
@@ -605,6 +727,7 @@ const useStore = create((set, get) => ({
             hasUnsavedChanges: true,
         }));
         saveToLocalStorageSync(get());
+        debounceSave(() => get().syncSave());
     },
 
     // --- Context Menu ---
@@ -645,6 +768,7 @@ const useStore = create((set, get) => ({
         set((state) => ({ nodes: [...state.nodes, newNode], hasUnsavedChanges: true }));
         get().pushToHistory();
         saveToLocalStorageSync(get());
+        debounceSave(() => get().syncSave());
     },
 
     // --- Lock ---
@@ -654,6 +778,7 @@ const useStore = create((set, get) => ({
             hasUnsavedChanges: true,
         }));
         saveToLocalStorageSync(get());
+        debounceSave(() => get().syncSave());
     },
 
     // --- Theme ---

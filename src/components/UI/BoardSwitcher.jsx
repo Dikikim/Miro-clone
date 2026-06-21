@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, Check, Pencil, Plus, Trash2, Search } from 'lucide-react';
 import useStore from '../../store/useStore';
 import ConfirmModal from './ConfirmModal';
@@ -9,28 +10,48 @@ const BOARD_COLORS = [
 ];
 
 export default function BoardSwitcher() {
-    const { currentBoardId, boardNames, switchBoard, renameBoard, addBoard, deleteBoard, boardSearch, setBoardSearch, theme } = useStore();
+    const { currentBoardId, boards, switchBoard, renameBoard, addBoard, deleteBoard, boardSearch, setBoardSearch, theme } = useStore();
     const isDark = theme === 'dark';
     const [isOpen, setIsOpen] = useState(false);
     const [editingId, setEditingId] = useState(null);
     const [editValue, setEditValue] = useState('');
     const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+    const [panelRect, setPanelRect] = useState(null);
     const dropdownRef = useRef(null);
+    const menuRef = useRef(null);          // the portaled dropdown panel
     const editInputRef = useRef(null);
     const searchInputRef = useRef(null);
 
+    // Match the dropdown to the header panel's width/left edge so it lines up
+    // evenly with the header instead of being a fixed 260px.
+    const measurePanel = useCallback(() => {
+        const el = document.querySelector('[data-header-panel]');
+        if (el) setPanelRect(el.getBoundingClientRect());
+    }, []);
+    useEffect(() => {
+        if (!isOpen) return;
+        measurePanel();
+        window.addEventListener('resize', measurePanel);
+        return () => window.removeEventListener('resize', measurePanel);
+    }, [isOpen, measurePanel]);
+
+    const boardName = (id) => boards.find(b => b.id === id)?.name || '';
+    const currentIdx = Math.max(0, boards.findIndex(b => b.id === currentBoardId));
+
     const handleRenameSubmit = useCallback((id) => {
         const trimmed = editValue.trim();
-        if (trimmed && trimmed !== boardNames[id]) {
+        if (trimmed && trimmed !== boardName(id)) {
             renameBoard(id, trimmed);
         }
         setEditingId(null);
-    }, [editValue, boardNames, renameBoard]);
+    }, [editValue, boards, renameBoard]);
 
     // Close dropdown on outside click
     useEffect(() => {
         const handleClickOutside = (e) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+            const inTrigger = dropdownRef.current?.contains(e.target);
+            const inMenu = menuRef.current?.contains(e.target);   // portaled to <body>
+            if (!inTrigger && !inMenu) {
                 setIsOpen(false);
                 if (editingId !== null) handleRenameSubmit(editingId);
             }
@@ -64,41 +85,48 @@ export default function BoardSwitcher() {
     const startEditing = (id, e) => {
         e.stopPropagation();
         setEditingId(id);
-        setEditValue(boardNames[id]);
+        setEditValue(boardName(id));
     };
 
-    const handleAddBoard = () => {
-        const newId = addBoard();
-        if (newId !== null) {
+    const handleAddBoard = async () => {
+        const newId = await addBoard();
+        if (newId) {
             switchBoard(newId);
         }
     };
 
-    const filteredBoards = boardNames
-        .map((name, id) => ({ name, id }))
+    const filteredBoards = boards
+        .map((b, idx) => ({ name: b.name, id: b.id, idx }))
         .filter(b => !boardSearch || b.name.toLowerCase().includes(boardSearch.toLowerCase()));
 
     return (
         <div ref={dropdownRef} className="relative">
             {/* Trigger button */}
             <button
-                onClick={() => { setIsOpen(!isOpen); setBoardSearch(''); }}
+                onClick={() => { if (!isOpen) measurePanel(); setIsOpen(!isOpen); setBoardSearch(''); }}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium shadow-sm ${isDark ? 'glass-chip-dark text-gray-200' : 'glass-chip text-gray-700'}`}
                 style={{ minWidth: '120px' }}
             >
                 <span
                     className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: BOARD_COLORS[currentBoardId % BOARD_COLORS.length] }}
+                    style={{ backgroundColor: BOARD_COLORS[currentIdx % BOARD_COLORS.length] }}
                 />
-                <span className="truncate max-w-[120px]">{boardNames[currentBoardId]}</span>
+                <span className="truncate max-w-[120px]">{boardName(currentBoardId)}</span>
                 <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
             </button>
 
-            {/* Dropdown */}
-            {isOpen && (
+            {/* Dropdown — portaled to <body> so it escapes the header's
+                pointer-events-none subtree and stacking context. */}
+            {isOpen && createPortal(
                 <div
-                    className={`absolute -right-4 top-full mt-2 rounded-xl py-1.5 z-[100] menu-accent-edge ${isDark ? 'popup-solid-dark' : 'popup-solid'}`}
-                    style={{ width: '260px' }}
+                    ref={menuRef}
+                    className={`fixed rounded-xl py-1.5 z-[1000] menu-accent-edge ${isDark ? 'popup-solid-dark' : 'popup-solid'}`}
+                    style={{
+                        top: panelRect ? panelRect.bottom + 8 : 60,
+                        left: panelRect ? panelRect.left : undefined,
+                        right: panelRect ? undefined : 16,
+                        width: panelRect ? panelRect.width : 260,
+                    }}
                 >
                     {/* Search */}
                     <div className="px-2 pb-1.5">
@@ -116,7 +144,7 @@ export default function BoardSwitcher() {
 
                     {/* Board list - scrollable */}
                     <div style={{ maxHeight: '280px', overflowY: 'auto', scrollbarWidth: 'thin' }}>
-                        {filteredBoards.map(({ name, id }) => (
+                        {filteredBoards.map(({ name, id, idx }) => (
                             <div
                                 key={id}
                                 onClick={() => handleBoardClick(id)}
@@ -128,7 +156,7 @@ export default function BoardSwitcher() {
                                 {/* Color dot */}
                                 <span
                                     className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                    style={{ backgroundColor: BOARD_COLORS[id % BOARD_COLORS.length] }}
+                                    style={{ backgroundColor: BOARD_COLORS[idx % BOARD_COLORS.length] }}
                                 />
 
                                 {/* Name or edit input */}
@@ -169,7 +197,7 @@ export default function BoardSwitcher() {
                                 )}
 
                                 {/* Delete button - only if more than 1 board */}
-                                {boardNames.length > 1 && editingId !== id && (
+                                {boards.length > 1 && editingId !== id && (
                                     <button
                                         onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(id); }}
                                         className="p-0.5 text-gray-300 hover:text-red-500 transition-colors"
@@ -191,8 +219,8 @@ export default function BoardSwitcher() {
                     <div className={`border-t mt-1 pt-1 px-2 ${isDark ? 'border-gray-700' : 'border-gray-100'}`}>
                         <button
                             onClick={handleAddBoard}
-                            disabled={boardNames.length >= 100}
-                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors ${boardNames.length >= 100
+                            disabled={boards.length >= 100}
+                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors ${boards.length >= 100
                                 ? 'text-gray-400 cursor-not-allowed'
                                 : isDark
                                     ? 'text-purple-400 hover:bg-gray-700'
@@ -200,7 +228,7 @@ export default function BoardSwitcher() {
                                 }`}
                         >
                             <Plus className="w-4 h-4" />
-                            Add Board ({boardNames.length}/100)
+                            Add Board ({boards.length}/100)
                         </button>
                     </div>
 
@@ -210,13 +238,14 @@ export default function BoardSwitcher() {
                             Boards auto-save independently
                         </span>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
             {/* Delete Confirmation */}
             <ConfirmModal
                 isOpen={confirmDeleteId !== null}
-                message={`Delete "${boardNames[confirmDeleteId] || ''}"? This cannot be undone.`}
+                message={`Delete "${boardName(confirmDeleteId)}"? This cannot be undone.`}
                 onConfirm={() => {
                     deleteBoard(confirmDeleteId);
                     setConfirmDeleteId(null);
