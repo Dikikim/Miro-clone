@@ -44,20 +44,20 @@ function fitStickyFontSize(text, width, height, baseFontSize = 18) {
 // font, weight, decoration) as a Group of per-run <Text> elements, laid out line
 // by line with per-line height and baseline alignment. Used when colorSegments
 // holds more than one run; otherwise the plain single <Text> is used.
-// Default near-black text is invisible on the dark canvas → render it white in
-// dark mode (text + sticky notes). Explicit non-default colours are kept. Reads
-// the theme live so it stays correct inside memoised callbacks.
-function adaptTextFill(color, sticky) {
-    const c = color || (sticky ? '#1a1a1a' : '#000000');
-    const isDark = useStore.getState().theme === 'dark';
-    return (isDark && (c === '#000000' || c === '#1a1a1a')) ? '#ffffff' : c;
+// Resolve a text colour for rendering. An UNSET colour follows the theme (black
+// in light, white in dark) so default text stays visible; an explicitly chosen
+// colour is always kept — so black is usable in dark mode and white in light.
+// Reads the theme live so it's correct even inside memoised callbacks.
+function adaptTextFill(color) {
+    if (color) return color;
+    return useStore.getState().theme === 'dark' ? '#ffffff' : '#000000';
 }
 
 function RichTextNode({ node, commonProps, isDark }) {
     const text = node.text || '';
     const lineHeight = node.lineHeight || 1;
     const base = nodeBaseAttrs(node);
-    if (isDark && (base.fill === '#000000' || base.fill === '#1a1a1a')) base.fill = '#ffffff';
+    const themeFill = isDark ? '#ffffff' : '#000000';
     const attrs = charAttrsFromSegments(node.colorSegments, text.length, base);
     const lines = text.split('\n');
 
@@ -81,7 +81,7 @@ function RichTextNode({ node, commonProps, isDark }) {
             elements.push(
                 <Text key={key++} x={x} y={y} text={runText}
                     fontSize={a.fontSize} fontFamily={a.fontFamily} fontStyle={a.fontStyle}
-                    textDecoration={a.textDecoration} fill={a.fill} listening={false} />
+                    textDecoration={a.textDecoration} fill={a.fill || themeFill} listening={false} />
             );
             x += measureRunWidth(runText, a.fontStyle, a.fontSize, a.fontFamily);
             i = j;
@@ -125,7 +125,7 @@ function wrappedRichRuns(text, attrs, baseSize, maxW) {
                 <Text key={key++} x={r.x} y={yy} text={r.text}
                     fontSize={r.attr.fontSize} fontFamily={r.attr.fontFamily}
                     fontStyle={r.attr.fontStyle} textDecoration={r.attr.textDecoration}
-                    fill={r.attr.fill} listening={false} />
+                    fill={adaptTextFill(r.attr.fill)} listening={false} />
             );
         }
         y += h;
@@ -440,11 +440,6 @@ export default function Whiteboard() {
     } = useStore();
 
     const isDarkTheme = theme === 'dark';
-    // Per-character base for rich (multi-colour) text, with its default fill adapted.
-    const adaptedBase = (n) => {
-        const b = nodeBaseAttrs(n);
-        return { ...b, fill: adaptTextFill(b.fill, n.type === 'sticky') };
-    };
 
     useEffect(() => {
         const handleResize = () => setStageSize({ width: window.innerWidth, height: window.innerHeight });
@@ -639,6 +634,13 @@ export default function Whiteboard() {
                     `;
                     textarea.style.setProperty('-webkit-scrollbar', 'none');
 
+                    // Declared before the store subscription below: the first
+                    // autoExpand() fires a synchronous setState that runs the
+                    // subscriber callback, which reads textareaRemoved. Declaring it
+                    // afterwards would put it in the temporal dead zone and throw,
+                    // aborting before textarea.focus() and breaking typing.
+                    let textareaRemoved = false;
+
                     // Keep the textarea's font metrics in sync with toolbar style
                     // changes so the (invisible) caret stays aligned with the live
                     // Konva text rendered underneath.
@@ -669,15 +671,46 @@ export default function Whiteboard() {
                             maxWidth = Math.max(maxWidth, tempSpan.offsetWidth + 30);
                             tempSpan.remove();
                         });
+                        // Don't let the line run off the right edge of the screen —
+                        // cap the width to the viewport so it wraps to the next line,
+                        // and wrap the Konva text at the same width.
+                        const taLeft = parseFloat(textarea.style.left) || 0;
+                        const availW = Math.max(120, window.innerWidth - taLeft - 16);
+                        maxWidth = Math.min(maxWidth, availW);
+                        const newW = maxWidth / stageScale;
+                        const curN = useStore.getState().nodes.find(n => n.id === newNodeId);
+                        if (curN && Math.abs((curN.width || 0) - newW) > 0.5) updateNodeTransient(newNodeId, { width: newW });
+
                         textarea.style.width = `${maxWidth}px`;
+
+                        // Keep the box on-screen horizontally: if it would poke past the
+                        // right edge (text started very close to it), shift it left.
+                        const maxLeft = window.innerWidth - maxWidth - 16;
+                        if (taLeft > maxLeft) {
+                            const newLeft = Math.max(8, maxLeft);
+                            const cl = useStore.getState().nodes.find(n => n.id === newNodeId);
+                            if (cl) updateNodeTransient(newNodeId, { x: cl.x + (newLeft - taLeft) / stageScale });
+                            textarea.style.left = `${newLeft}px`;
+                        }
+
                         textarea.style.height = 'auto';
                         textarea.style.height = `${textarea.scrollHeight}px`;
+
+                        // If the box would run past the bottom of the screen, lift it
+                        // (and the node) upward so it grows up instead of off-screen.
+                        const curTop = parseFloat(textarea.style.top) || 0;
+                        const maxTop = window.innerHeight - textarea.offsetHeight - 16;
+                        if (curTop > maxTop) {
+                            const newTop = Math.max(8, maxTop);
+                            const cn = useStore.getState().nodes.find(n => n.id === newNodeId);
+                            if (cn) updateNodeTransient(newNodeId, { y: cn.y + (newTop - curTop) / stageScale });
+                            textarea.style.top = `${newTop}px`;
+                        }
                     };
                     textarea.addEventListener('input', () => syncLiveText(textarea, newNodeId, autoExpand));
                     autoExpand();
                     textarea.focus();
 
-                    let textareaRemoved = false;
                     const removeTextarea = (save = true) => {
                         if (textareaRemoved) return;
                         textareaRemoved = true;
@@ -1088,6 +1121,11 @@ export default function Whiteboard() {
         }
         textarea.style.setProperty('-webkit-scrollbar', 'none');
 
+        // Declared before the store subscription below so the subscriber callback
+        // (fired synchronously by autoExpand()'s setState) never reads it in its
+        // temporal dead zone — see the matching note in the new-text path.
+        let textareaRemoved = false;
+
         // Keep the textarea's font metrics in sync with toolbar style changes so
         // the (invisible) caret stays aligned with the live Konva text underneath.
         const unsubStyleSync = useStore.subscribe((state) => {
@@ -1101,7 +1139,6 @@ export default function Whiteboard() {
             textarea.style.caretColor = adaptTextFill(updatedNode.type === 'sticky' ? updatedNode.textColor : updatedNode.fill, updatedNode.type === 'sticky');
             autoExpand();
         });
-        let textareaRemoved = false;
 
         // Auto-expand width and height as user types
         // Reads current styles from textarea.style so it picks up live changes from FloatingTextToolbar
@@ -1130,13 +1167,49 @@ export default function Whiteboard() {
             if (node.type === 'sticky') {
                 const stickyMaxW = (node.width - 24) * stageScale;
                 maxWidth = Math.min(maxWidth, stickyMaxW);
+            } else {
+                // Text: never let a line run off the right edge of the screen. Cap
+                // the width to the available viewport so the line wraps below, and
+                // wrap the Konva text at the same width (guard avoids update loops).
+                const taLeft = parseFloat(textarea.style.left) || 0;
+                const availW = Math.max(120, window.innerWidth - taLeft - 16);
+                maxWidth = Math.min(maxWidth, availW);
+                const newW = maxWidth / stageScale;
+                const cur = useStore.getState().nodes.find(n => n.id === node.id);
+                if (cur && Math.abs((cur.width || 0) - newW) > 0.5) updateNodeTransient(node.id, { width: newW });
             }
 
             textarea.style.width = `${maxWidth}px`;
 
+            // Keep a text box on-screen horizontally: if it would poke past the right
+            // edge, shift it (and the node) left.
+            if (node.type !== 'sticky') {
+                const taLeft = parseFloat(textarea.style.left) || 0;
+                const maxLeft = window.innerWidth - maxWidth - 16;
+                if (taLeft > maxLeft) {
+                    const newLeft = Math.max(8, maxLeft);
+                    const cl = useStore.getState().nodes.find(n => n.id === node.id);
+                    if (cl) updateNodeTransient(node.id, { x: cl.x + (newLeft - taLeft) / stageScale });
+                    textarea.style.left = `${newLeft}px`;
+                }
+            }
+
             // Expand height using scrollHeight
             textarea.style.height = 'auto';
             textarea.style.height = `${textarea.scrollHeight}px`;
+
+            // If the box would run past the bottom of the screen, lift it (and the
+            // text node) upward so it grows up instead of off-screen.
+            if (node.type !== 'sticky') {
+                const curTop = parseFloat(textarea.style.top) || 0;
+                const maxTop = window.innerHeight - textarea.offsetHeight - 16;
+                if (curTop > maxTop) {
+                    const newTop = Math.max(8, maxTop);
+                    const cur = useStore.getState().nodes.find(n => n.id === node.id);
+                    if (cur) updateNodeTransient(node.id, { y: cur.y + (newTop - curTop) / stageScale });
+                    textarea.style.top = `${newTop}px`;
+                }
+            }
         };
         textarea.addEventListener('input', () => syncLiveText(textarea, node.id, autoExpand));
         autoExpand();
@@ -1511,6 +1584,8 @@ export default function Whiteboard() {
                         fontStyle={node.fontStyle || 'normal'}
                         textDecoration={node.textDecoration || ''}
                         align={node.align || 'left'}
+                        width={node.width}
+                        wrap="word"
                         opacity={textOpacity}
                         listening={textListening}
                     />
@@ -1566,8 +1641,8 @@ export default function Whiteboard() {
                             <Group x={pad} y={pad}>
                                 {wrappedRichRuns(
                                     stickyText,
-                                    charAttrsFromSegments(node.colorSegments, stickyText.length, adaptedBase(node)),
-                                    adaptedBase(node).fontSize,
+                                    charAttrsFromSegments(node.colorSegments, stickyText.length, nodeBaseAttrs(node)),
+                                    nodeBaseAttrs(node).fontSize,
                                     maxW
                                 )}
                             </Group>

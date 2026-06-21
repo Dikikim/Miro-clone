@@ -26,6 +26,11 @@ dist-ssr
 # Environment variables
 .env
 
+# Secrets / server credentials — never commit (rotate any already-leaked ones)
+server/credentials.json
+server/token.pickle
+*.pickle
+
 # Python
 __pycache__/
 *.py[cod]

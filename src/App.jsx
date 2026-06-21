@@ -14,8 +14,6 @@ import VideoUploader from './components/Upload/VideoUploader';
 import { useEffect, useState, useCallback } from 'react';
 import useStore from './store/useStore';
 
-if (typeof window !== 'undefined') window.__kotStore = useStore; // TEMP: verification handle
-
 function App() {
   const {
     tool, setTool, deleteSelectedNodes, selectedNodeIds, clearSelection,
@@ -284,8 +282,8 @@ function App() {
           backgroundImage: 'url(/transp_bg.png)',
           backgroundRepeat: 'no-repeat',
           backgroundPosition: 'center',
-          backgroundSize: 'cover',
-          transform: 'scale(1.3)', // 30% larger watermark logo
+          backgroundSize: 'contain',
+          transform: 'scale(1.43)', // contained watermark, 30% larger
           opacity: theme === 'dark' ? 0.10 : 0.08,
         }}
       />

@@ -8,7 +8,7 @@
 export function nodeBaseAttrs(node) {
     const isSticky = node.type === 'sticky';
     return {
-        fill: isSticky ? (node.textColor || '#1a1a1a') : (node.fill || '#000000'),
+        fill: isSticky ? node.textColor : node.fill,   // undefined when unset → theme default at render
         fontSize: node.fontSize || (isSticky ? 18 : 24),
         fontFamily: node.fontFamily || 'Arial',
         fontStyle: node.fontStyle || 'normal',

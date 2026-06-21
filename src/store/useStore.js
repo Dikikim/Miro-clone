@@ -211,7 +211,7 @@ const useStore = create((set, get) => ({
     highlighterStrokeWidth: 20,
     laserStrokeWidth: 3,
     objectStrokeWidth: 2,
-    textColor: '#000000',
+    textColor: null,   // null = follow the theme (black in light, white in dark); a real colour pins it
     textFontFamily: 'Arial',
     textFontSize: 24,
     highlighterColor: '#ffeb3b',

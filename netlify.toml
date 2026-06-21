@@ -2,6 +2,13 @@
   command = "npm run build"
   publish = "dist"
 
+# Pin a modern Node so Vite 7 / rolldown builds the same way Netlify does locally.
+# (An old default Node is the usual reason a build that works locally fails on Netlify.)
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS = "--legacy-peer-deps"
+
+# SPA fallback — every path serves the built index.html.
 [[redirects]]
   from = "/*"
   to = "/index.html"

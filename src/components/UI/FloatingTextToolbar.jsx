@@ -114,10 +114,10 @@ export default function FloatingTextToolbar({ nodeId, position }) {
     const isItalic = fontStyle.includes('italic');
     const isUnderline = node.textDecoration === 'underline';
     const isStrike = node.textDecoration === 'line-through';
-    const currentColor = isSticky ? (node.textColor || '#1a1a1a') : (node.fill || '#000000');
-    // The "A" swatch shows the effective colour — default black text renders white
-    // in dark mode, so show it white here too (otherwise it's invisible on the bar).
-    const displayColor = (isDark && (currentColor === '#000000' || currentColor === '#1a1a1a')) ? '#ffffff' : currentColor;
+    const currentColor = isSticky ? node.textColor : node.fill;   // may be unset
+    // Effective colour for the "A" swatch and the picker: an UNSET colour follows
+    // the theme (black light / white dark); an explicit colour is shown as-is.
+    const displayColor = currentColor || (isDark ? '#ffffff' : '#000000');
 
     // Apply a per-character style transform to the selected range — or the whole
     // text when nothing is selected — for text AND sticky notes. Collapses back
@@ -395,7 +395,7 @@ export default function FloatingTextToolbar({ nodeId, position }) {
                         onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}
                     >
                         <ColorPalette
-                            selectedColor={currentColor}
+                            selectedColor={displayColor}
                             onColorSelect={handleTextColorChange}
                             title="Text Color"
                             showEyedropper={false}

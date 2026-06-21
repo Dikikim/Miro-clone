@@ -1017,7 +1017,7 @@ function ExtractPagesModal({ node, onClose, addNode }) {
                 {/* Content area — switches between single and grid view */}
                 <div className="flex-1 overflow-hidden px-5 py-4 relative flex flex-col">
                     {/* Faded logo watermark behind the grid (90% of the area) */}
-                    <img src="/logo-spinner.png" alt="" aria-hidden="true"
+                    <img src="/transp_bg.png" alt="" aria-hidden="true"
                         className="pointer-events-none select-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
                         style={{ width: '90%', height: '90%', objectFit: 'contain', opacity: isDark ? 0.08 : 0.05, zIndex: 0 }} />
                     {/* Grid — 5×2 thumbnails sized to fit the window without scrolling */}
