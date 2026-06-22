@@ -111,8 +111,8 @@ export default function BoardSwitcher() {
                     className="w-2.5 h-2.5 rounded-full flex-shrink-0"
                     style={{ backgroundColor: BOARD_COLORS[currentIdx % BOARD_COLORS.length] }}
                 />
-                <span className="truncate max-w-[120px]">{boardName(currentBoardId)}</span>
-                <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                <span className="flex-1 text-left truncate max-w-[120px]">{boardName(currentBoardId)}</span>
+                <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform flex-shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
             </button>
 
             {/* Dropdown — portaled to <body> so it escapes the header's
