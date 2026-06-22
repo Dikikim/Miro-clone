@@ -2,20 +2,35 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Copy, Download, ChevronLeft, ChevronRight, X, Check, FileDown, ZoomIn, ZoomOut } from 'lucide-react';
 import useStore from '../../store/useStore';
 import LogoSpinner from '../UI/LogoSpinner';
-import { loadMediaFromDB } from '../../store/useStore';
-import { renderPdfPage, base64ToBytes } from '../../utils/pdfHelpers';
+import { loadMediaFromDB, saveMediaToDB } from '../../store/useStore';
+import { renderPdfPage, base64ToBytes, bytesToBase64 } from '../../utils/pdfHelpers';
 
 /**
- * Helper to load PDF bytes from IndexedDB for a given node.
+ * Load a PDF's raw bytes for a node. Tries local IndexedDB first (fast path /
+ * the uploader's own browser); on a miss, falls back to the cloud copy at
+ * node.pdfUrl (Phase 4) for shared viewers and caches it locally so page nav
+ * and extraction don't refetch the whole file. Accepts a node or a bare id.
  * Returns Uint8Array or null.
  */
-async function getPdfBytes(nodeId) {
-    const pdfBase64 = await loadMediaFromDB(`${nodeId}_pdf`);
-    if (!pdfBase64) {
-        console.error('PDF data not found in IndexedDB for node:', nodeId);
-        return null;
+async function getPdfBytes(nodeOrId) {
+    const node = (nodeOrId && typeof nodeOrId === 'object') ? nodeOrId : null;
+    const nodeId = node ? node.id : nodeOrId;
+
+    const local = await loadMediaFromDB(`${nodeId}_pdf`);
+    if (local) return base64ToBytes(local);
+
+    if (node?.pdfUrl) {
+        try {
+            const buf = await fetch(node.pdfUrl).then(r => r.arrayBuffer());
+            const bytes = new Uint8Array(buf);
+            try { await saveMediaToDB(`${nodeId}_pdf`, bytesToBase64(bytes)); } catch { /* cache best-effort */ }
+            return bytes;
+        } catch (e) {
+            console.error('PDF cloud fetch failed for node:', nodeId, e);
+        }
     }
-    return base64ToBytes(pdfBase64);
+    console.error('PDF data not found for node:', nodeId);
+    return null;
 }
 
 /**
@@ -47,7 +62,7 @@ export default function PdfOverlay({ node, stagePosition, stageScale, isSelected
         if (node.currentPage <= 1 || navigating) return;
         setNavigating(true);
         try {
-            const bytes = await getPdfBytes(node.id);
+            const bytes = await getPdfBytes(node);
             if (!bytes) { setNavigating(false); return; }
             const newPage = node.currentPage - 1;
             const { dataUrl } = await renderPdfPage(bytes, newPage, 1.5);
@@ -62,7 +77,7 @@ export default function PdfOverlay({ node, stagePosition, stageScale, isSelected
         if (node.currentPage >= node.totalPages || navigating) return;
         setNavigating(true);
         try {
-            const bytes = await getPdfBytes(node.id);
+            const bytes = await getPdfBytes(node);
             if (!bytes) { setNavigating(false); return; }
             const newPage = node.currentPage + 1;
             const { dataUrl } = await renderPdfPage(bytes, newPage, 1.5);
@@ -79,7 +94,7 @@ export default function PdfOverlay({ node, stagePosition, stageScale, isSelected
         if (isNaN(target) || target === node.currentPage || navigating) return;
         setNavigating(true);
         try {
-            const bytes = await getPdfBytes(node.id);
+            const bytes = await getPdfBytes(node);
             if (!bytes) { setNavigating(false); return; }
             const { dataUrl } = await renderPdfPage(bytes, target, 1.5);
             updateNode(node.id, { currentPage: target, coverSrc: dataUrl });
@@ -92,7 +107,7 @@ export default function PdfOverlay({ node, stagePosition, stageScale, isSelected
     // Download original PDF
     const handleDownload = useCallback(async () => {
         try {
-            const bytes = await getPdfBytes(node.id);
+            const bytes = await getPdfBytes(node);
             if (!bytes) return;
             const blob = new Blob([bytes], { type: 'application/pdf' });
             const url = URL.createObjectURL(blob);
@@ -111,7 +126,7 @@ export default function PdfOverlay({ node, stagePosition, stageScale, isSelected
     // Download the current page as PNG
     const handleDownloadPage = useCallback(async () => {
         try {
-            const bytes = await getPdfBytes(node.id);
+            const bytes = await getPdfBytes(node);
             if (!bytes) return;
             const { dataUrl } = await renderPdfPage(bytes, node.currentPage, 2);
             const a = document.createElement('a');
@@ -314,7 +329,7 @@ function SinglePageModal({ node, onClose, onNavigate }) {
         let cancelled = false;
         const load = async () => {
             try {
-                const bytes = await getPdfBytes(node.id);
+                const bytes = await getPdfBytes(node);
                 if (!cancelled && bytes) {
                     pdfBytesRef.current = bytes;
                     const { dataUrl } = await renderPdfPage(bytes, initialPageRef.current, 2);
@@ -472,7 +487,7 @@ function MultiPageModal({ node, onClose, onNavigate }) {
             setLoadingThumbnails(true);
             try {
                 if (!pdfBytesRef.current) {
-                    const bytes = await getPdfBytes(node.id);
+                    const bytes = await getPdfBytes(node);
                     if (!bytes || cancelled) { setLoadingThumbnails(false); return; }
                     pdfBytesRef.current = bytes;
                 }
@@ -671,7 +686,7 @@ function PageZoomViewer({ node, pageNum, totalPages, pdfBytesRef, selectedPages,
         (async () => {
             setLoading(true);
             try {
-                const bytes = pdfBytesRef?.current || await getPdfBytes(node.id);
+                const bytes = pdfBytesRef?.current || await getPdfBytes(node);
                 if (!bytes) { if (!cancelled) setLoading(false); return; }
                 const { dataUrl } = await renderPdfPage(bytes, page, 2.5);
                 if (!cancelled) { setImg(dataUrl); setLoading(false); }
@@ -820,7 +835,7 @@ function ExtractPagesModal({ node, onClose, addNode }) {
         let cancelled = false;
         const loadBytes = async () => {
             try {
-                const bytes = await getPdfBytes(node.id);
+                const bytes = await getPdfBytes(node);
                 if (!cancelled && bytes) {
                     pdfBytesRef.current = bytes;
                     if (!cancelled) setBytesReady(true);
@@ -933,7 +948,7 @@ function ExtractPagesModal({ node, onClose, addNode }) {
         const nextFreeSlot = () => { let i = 0; while (occupied.has(i)) i++; occupied.add(i); return i; };
 
         try {
-            const bytes = pdfBytesRef.current || await getPdfBytes(node.id);
+            const bytes = pdfBytesRef.current || await getPdfBytes(node);
             if (!bytes) { setLoading(false); return; }
 
             const sortedPages = [...selectedPages].sort((a, b) => a - b);

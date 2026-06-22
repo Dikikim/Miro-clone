@@ -218,7 +218,31 @@ function useImage(src) {
 }
 
 function ImageNode({ node, commonProps }) {
-    const image = useImage(node.src);
+    const [recoveredSrc, setRecoveredSrc] = useState(null);
+    // A real data:/blob:/https src is used directly. An empty or `__idb__`
+    // placeholder (e.g. an extracted PDF page whose large data URL was stripped
+    // to IndexedDB) is recovered from IDB — the same safety net video/PDF nodes
+    // already have, so extracted images survive reloads. Cross-user copies carry
+    // an https Storage URL (Phase 4) and skip recovery entirely.
+    const needsRecovery = !node.src || node.src.length <= 10 ||
+        (typeof node.src === 'string' && node.src.startsWith('__idb__'));
+    const image = useImage(needsRecovery ? recoveredSrc : node.src);
+
+    useEffect(() => {
+        if (!needsRecovery) { setRecoveredSrc(null); return; }
+        let cancelled = false;
+        (async () => {
+            try {
+                const { loadMediaFromDB } = await import('../../store/useStore');
+                const key = (typeof node.src === 'string' && node.src.startsWith('__idb__'))
+                    ? node.src.replace('__idb__', '') : node.id;
+                const rec = (await loadMediaFromDB(key)) || (await loadMediaFromDB(node.id));
+                if (!cancelled && rec) setRecoveredSrc(rec);
+            } catch (e) { console.error('Image recover error:', e); }
+        })();
+        return () => { cancelled = true; };
+    }, [node.id, node.src, needsRecovery]);
+
     if (!image) return null;
     return <KonvaImage {...commonProps} x={node.x} y={node.y} width={node.width} height={node.height} image={image} />;
 }
@@ -356,8 +380,12 @@ function PdfDocumentNode({ node, commonProps }) {
                 const { loadMediaFromDB } = await import('../../store/useStore');
                 const { renderPdfPage, base64ToBytes } = await import('../../utils/pdfHelpers');
                 const pdfBase64 = await loadMediaFromDB(`${node.id}_pdf`);
-                if (!pdfBase64 || cancelled) return;
-                const bytes = base64ToBytes(pdfBase64);
+                let bytes = pdfBase64 ? base64ToBytes(pdfBase64) : null;
+                // Shared viewers have no local bytes — pull the cloud copy (Phase 4).
+                if (!bytes && node.pdfUrl) {
+                    bytes = new Uint8Array(await fetch(node.pdfUrl).then(r => r.arrayBuffer()));
+                }
+                if (!bytes || cancelled) return;
                 const { dataUrl } = await renderPdfPage(bytes, node.currentPage || 1, 1.5);
                 if (!cancelled) {
                     setRecoveredSrc(dataUrl);

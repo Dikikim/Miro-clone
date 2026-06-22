@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { supabase } from '../lib/supabase';
 import * as boardsApi from '../lib/boardsApi';
+import * as mediaApi from '../lib/mediaApi';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'kot_state_board_';
 const BOARD_NAMES_KEY = 'kot_board_names';        // legacy (pre-cloud) board names
@@ -230,6 +231,64 @@ const resolveMediaNodes = async (nodes) => Promise.all(nodes.map(async (node) =>
     }
     return result;
 }));
+
+// ── Cloud media (Phase 4) ──────────────────────────────────────────────────
+// Move a node's binary media into Supabase Storage and rewrite the node to hold
+// public URLs, so other board members (and the same user on another device) can
+// load it. Best-effort: if Storage isn't reachable/configured, the node comes
+// back unchanged and the IndexedDB/`__idb__` path keeps working locally.
+const isHttpUrl = (s) => typeof s === 'string' && /^https?:\/\//.test(s);
+const nodeNeedsUpload = (n) =>
+    (n.src && !isHttpUrl(n.src)) ||
+    (n.coverSrc && !isHttpUrl(n.coverSrc)) ||
+    (n.type === 'pdf' && !isHttpUrl(n.pdfUrl));
+
+// Resolve a node field (data:/blob:/__idb__) to something uploadable, or null.
+const resolveUploadable = async (value) => {
+    if (typeof value !== 'string' || !value) return null;
+    if (value.startsWith('data:')) return { kind: 'dataUrl', value };
+    if (value.startsWith('__idb__')) {
+        const stored = await loadMediaFromDB(value.replace('__idb__', ''));
+        return stored ? { kind: 'dataUrl', value: stored } : null;  // IDB src/cover are full data URLs
+    }
+    if (value.startsWith('blob:')) {
+        try { return { kind: 'blob', value: await fetch(value).then(r => r.blob()) }; }
+        catch { return null; }
+    }
+    return null;  // already http(s) or unrecognized
+};
+
+const uploadField = async (path, resolved) => {
+    if (!resolved) return null;
+    return resolved.kind === 'dataUrl'
+        ? mediaApi.uploadDataUrl(path, resolved.value)
+        : mediaApi.uploadBlob(path, resolved.value);
+};
+
+// Upload one node's media; returns a new node with URL fields if anything moved,
+// otherwise the same reference (so callers can cheaply detect "no change").
+const uploadNodeMedia = async (boardId, node) => {
+    if (!boardId || !nodeNeedsUpload(node)) return node;
+    const base = `${boardId}/${node.id}`;
+    let out = node;
+
+    if (out.src && !isHttpUrl(out.src)) {
+        const url = await uploadField(`${base}/src`, await resolveUploadable(out.src));
+        if (url) out = { ...out, src: url };
+    }
+    if (out.coverSrc && !isHttpUrl(out.coverSrc)) {
+        const url = await uploadField(`${base}/cover`, await resolveUploadable(out.coverSrc));
+        if (url) out = { ...out, coverSrc: url };
+    }
+    if (out.type === 'pdf' && !isHttpUrl(out.pdfUrl)) {
+        const b64 = await loadMediaFromDB(`${node.id}_pdf`);   // stored as raw base64
+        if (b64) {
+            const url = await mediaApi.uploadBase64(`${base}/doc.pdf`, b64, 'application/pdf');
+            if (url) out = { ...out, pdfUrl: url };
+        }
+    }
+    return out;
+};
 
 // Per-board record of what we last pushed, so each save only sends the diff.
 const lastSyncedNodes = new Map();    // boardId -> Map(id -> jsonHash)
@@ -510,7 +569,36 @@ const useStore = create((set, get) => ({
         if (!boardId) return;
         const uid = await boardsApi.getUserId();
         if (!uid) return;
-        const strippedNodes = stripNodes(state.nodes);
+
+        // Phase 4: push this user's local media to Storage and rewrite the
+        // affected nodes to hold public URLs (so the cloud row, and every other
+        // viewer, gets a loadable link). Only touch nodes we may write — RLS
+        // rejects the rest anyway. Best-effort: failed uploads leave the node as
+        // is, so stripNodes still falls back to an `__idb__` ref.
+        const own = (n) => !n.createdBy || n.createdBy === uid;
+        if (state.nodes.some(n => own(n) && nodeNeedsUpload(n))) {
+            const uploaded = await Promise.all(
+                state.nodes.map(n => (own(n) ? uploadNodeMedia(boardId, n) : Promise.resolve(n)))
+            );
+            const byId = new Map(uploaded.map(n => [n.id, n]));
+            // Merge URL fields back by id so edits made during the upload await
+            // aren't clobbered (only the media links are applied).
+            set((s) => ({
+                nodes: s.nodes.map((n) => {
+                    const u = byId.get(n.id);
+                    if (!u || u === n) return n;
+                    const patch = {};
+                    if (isHttpUrl(u.src) && u.src !== n.src) patch.src = u.src;
+                    if (isHttpUrl(u.coverSrc) && u.coverSrc !== n.coverSrc) patch.coverSrc = u.coverSrc;
+                    if (isHttpUrl(u.pdfUrl) && u.pdfUrl !== n.pdfUrl) patch.pdfUrl = u.pdfUrl;
+                    return Object.keys(patch).length ? { ...n, ...patch } : n;
+                }),
+            }));
+            await saveToLocalStorage(get(), boardId);   // re-cache with URLs
+        }
+
+        const nodesForPush = get().nodes;
+        const strippedNodes = stripNodes(nodesForPush);
         const nodeDiff = diffItems(boardId, strippedNodes, lastSyncedNodes);
         const commentDiff = diffItems(boardId, state.comments || [], lastSyncedComments);
         await boardsApi.pushNodes(boardId, nodeDiff.upserts, nodeDiff.deleteIds);
@@ -572,6 +660,9 @@ const useStore = create((set, get) => ({
             historyIndex: 0,
             isLoading: false,
         });
+        // Lazily migrate any pre-Phase-4 local media to cloud Storage so shared
+        // viewers can see it (syncSave only uploads media this user owns).
+        if (nodes.some(nodeNeedsUpload)) debounceSave(() => get().syncSave());
         })();
         try { return await loadDataPromise; } finally { loadDataPromise = null; }
     },
@@ -597,6 +688,7 @@ const useStore = create((set, get) => ({
             tool: 'select',
         });
         saveCurrentBoardId(targetBoardId);
+        if (nodes.some(nodeNeedsUpload)) debounceSave(() => get().syncSave());
     },
 
     switchBoard: async (targetBoardId) => {
