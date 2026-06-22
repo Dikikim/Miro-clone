@@ -60,6 +60,33 @@ export const renderPdfPage = async (pdfBytes, pageNum, scale = 1.5) => {
 };
 
 /**
+ * Resolve PDF bytes from a source string — either an http(s) URL (fetched) or a
+ * `data:` URL (decoded by hand; the app's CSP blocks `fetch()` on data: URLs).
+ * Returns Uint8Array or null. Throws on a failed HTTP fetch so callers can fall
+ * through to the next candidate source.
+ */
+export const fetchPdfBytes = async (url) => {
+    if (typeof url !== 'string' || !url) return null;
+    if (url.startsWith('data:')) {
+        return base64ToBytes(url.slice(url.indexOf(',') + 1));
+    }
+    if (/^https?:\/\//.test(url)) {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return new Uint8Array(await r.arrayBuffer());
+    }
+    return null;
+};
+
+/**
+ * Read a PDF's page count from its bytes (uses the cached document).
+ */
+export const getPdfPageCount = async (pdfBytes) => {
+    const pdf = await getDocument(pdfBytes);
+    return pdf.numPages;
+};
+
+/**
  * Convert base64 string back to Uint8Array
  */
 export const base64ToBytes = (base64) => {

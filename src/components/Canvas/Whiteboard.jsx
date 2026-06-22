@@ -381,19 +381,30 @@ function PdfDocumentNode({ node, commonProps }) {
         const recover = async () => {
             try {
                 const { loadMediaFromDB } = await import('../../store/useStore');
-                const { renderPdfPage, base64ToBytes } = await import('../../utils/pdfHelpers');
+                const { renderPdfPage, base64ToBytes, fetchPdfBytes, getPdfPageCount } = await import('../../utils/pdfHelpers');
                 const pdfBase64 = await loadMediaFromDB(`${node.id}_pdf`);
                 let bytes = pdfBase64 ? base64ToBytes(pdfBase64) : null;
-                // Shared viewers have no local bytes — pull the cloud copy (Phase 4).
-                if (!bytes && node.pdfUrl) {
-                    bytes = new Uint8Array(await fetch(node.pdfUrl).then(r => r.arrayBuffer()));
+                // Shared viewers (no local bytes) pull the cloud copy. Prefer
+                // pdfUrl; fall back to `src` (where unified-modal PDFs landed).
+                for (const url of [node.pdfUrl, node.src]) {
+                    if (bytes || !url) continue;
+                    try { bytes = await fetchPdfBytes(url); } catch (e) { console.error('PDF cover fetch failed:', url, e); }
                 }
                 if (!bytes || cancelled) return;
                 const { dataUrl } = await renderPdfPage(bytes, node.currentPage || 1, 1.5);
-                if (!cancelled) {
-                    setRecoveredSrc(dataUrl);
-                    updateNode(node.id, { coverSrc: dataUrl });
+                if (cancelled) return;
+                // Heal a node missing render metadata (e.g. a PDF added via the
+                // unified modal, which stored only `src`): give it a cover, a page
+                // count, and a pdfUrl so the overlay + extract work and future loads
+                // don't re-fetch the whole file.
+                const patch = { coverSrc: dataUrl };
+                if (!node.currentPage) patch.currentPage = 1;
+                if (!node.totalPages) {
+                    try { patch.totalPages = await getPdfPageCount(bytes); } catch { /* keep undefined */ }
                 }
+                if (!node.pdfUrl && /^https?:\/\//.test(node.src || '')) patch.pdfUrl = node.src;
+                setRecoveredSrc(dataUrl);
+                updateNode(node.id, patch);
             } catch (e) {
                 console.error('PDF cover recovery error:', e);
             }

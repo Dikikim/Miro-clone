@@ -1,7 +1,9 @@
 import { useState, useRef, useCallback } from 'react';
 import { X, Youtube, Upload, Image, FileText, Music, Video, AlertCircle } from 'lucide-react';
 import { parseYoutubeUrl, getYoutubeEmbedUrl, handleFileUpload } from '../../utils/fileHelpers';
-import useStore from '../../store/useStore';
+import { loadPdfJs, bytesToBase64 } from '../../utils/pdfHelpers';
+import { v4 as uuidv4 } from 'uuid';
+import useStore, { saveMediaToDB } from '../../store/useStore';
 
 const ACCEPTED_TYPES = {
     image: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/bmp', 'image/heic', 'image/heif'],
@@ -66,7 +68,9 @@ export default function UnifiedMediaModal({ onClose }) {
             // HEIC files: browsers with HEIC support will display directly
             // For full HEIC conversion, install heic2any: npm install heic2any
 
-            const dataUrl = await handleFileUpload(src);
+            // PDFs are read as raw bytes below (not as a data URL) — reading a big
+            // PDF as a data URL just to throw it away wastes time/memory.
+            const dataUrl = category === 'document' ? null : await handleFileUpload(src);
             const pos = getCenterPos();
 
             switch (category) {
@@ -86,9 +90,32 @@ export default function UnifiedMediaModal({ onClose }) {
                 case 'video':
                     addNode({ type: 'video', x: pos.x - 240, y: pos.y - 135, width: 480, height: 270, src: dataUrl, fileName: file.name });
                     break;
-                case 'document':
-                    addNode({ type: 'pdf', x: pos.x - 150, y: pos.y - 200, width: 300, height: 400, src: dataUrl, fileName: file.name });
+                case 'document': {
+                    // Mirror PdfUploader: render a cover, save the raw bytes to
+                    // IndexedDB under `${id}_pdf`, and set page metadata — so the
+                    // node renders, navigates, and extracts. (The old code dumped
+                    // the whole PDF into `src`, which no render path reads.)
+                    const pdfjsLib = await loadPdfJs();
+                    const arrayBuffer = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer).slice() }).promise;
+                    const page = await pdf.getPage(1);
+                    const viewport = page.getViewport({ scale: 1.5 });
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    await page.render({ canvasContext: ctx, viewport }).promise;
+                    const coverSrc = canvas.toDataURL('image/png');
+                    const w = viewport.width / 2, h = viewport.height / 2;
+                    const nodeId = uuidv4();
+                    await saveMediaToDB(`${nodeId}_pdf`, bytesToBase64(new Uint8Array(arrayBuffer)));
+                    addNode({
+                        id: nodeId, type: 'pdf',
+                        x: pos.x - w / 2, y: pos.y - h / 2, width: w, height: h,
+                        fileName: file.name, coverSrc, totalPages: pdf.numPages, currentPage: 1,
+                    });
                     break;
+                }
             }
             onClose?.();
         } catch (e) {

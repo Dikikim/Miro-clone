@@ -3,7 +3,7 @@ import { Copy, Download, ChevronLeft, ChevronRight, X, Check, FileDown, ZoomIn, 
 import useStore from '../../store/useStore';
 import LogoSpinner from '../UI/LogoSpinner';
 import { loadMediaFromDB, saveMediaToDB } from '../../store/useStore';
-import { renderPdfPage, base64ToBytes, bytesToBase64 } from '../../utils/pdfHelpers';
+import { renderPdfPage, base64ToBytes, bytesToBase64, fetchPdfBytes } from '../../utils/pdfHelpers';
 
 /**
  * Load a PDF's raw bytes for a node. Tries local IndexedDB first (fast path /
@@ -19,14 +19,19 @@ async function getPdfBytes(nodeOrId) {
     const local = await loadMediaFromDB(`${nodeId}_pdf`);
     if (local) return base64ToBytes(local);
 
-    if (node?.pdfUrl) {
+    // Shared viewers (and nodes whose IDB bytes were lost) load from the cloud.
+    // Prefer pdfUrl (the proper `/doc.pdf` path); fall back to `src`, which is
+    // where PDFs added via the unified "Add Media" modal got uploaded.
+    for (const url of [node?.pdfUrl, node?.src]) {
+        if (!url) continue;
         try {
-            const buf = await fetch(node.pdfUrl).then(r => r.arrayBuffer());
-            const bytes = new Uint8Array(buf);
-            try { await saveMediaToDB(`${nodeId}_pdf`, bytesToBase64(bytes)); } catch { /* cache best-effort */ }
-            return bytes;
+            const bytes = await fetchPdfBytes(url);
+            if (bytes) {
+                try { await saveMediaToDB(`${nodeId}_pdf`, bytesToBase64(bytes)); } catch { /* cache best-effort */ }
+                return bytes;
+            }
         } catch (e) {
-            console.error('PDF cloud fetch failed for node:', nodeId, e);
+            console.error('PDF cloud fetch failed for node:', nodeId, url, e);
         }
     }
     console.error('PDF data not found for node:', nodeId);
