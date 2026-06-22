@@ -220,14 +220,20 @@ const stripNodeForStorage = (node) => {
 const stripNodes = (nodes) => nodes.map(stripNodeForStorage);
 
 // Resolve `__idb__` media refs back to data URLs from IndexedDB after a cloud
-// fetch (media not present in this browser resolves to '' until Phase 4).
+// fetch. CRUCIAL: if the bytes aren't in THIS browser (e.g. a shared board, or
+// prod when the media was made on localhost), KEEP the `__idb__` ref — never
+// blank it to ''. Blanking would let a later syncSave push the empty value over
+// the cloud pointer, permanently disconnecting the media. A preserved ref stays
+// recoverable + uploadable from whichever browser does hold the bytes.
 const resolveMediaNodes = async (nodes) => Promise.all(nodes.map(async (node) => {
     let result = node;
     if (typeof result.src === 'string' && result.src.startsWith('__idb__')) {
-        result = { ...result, src: (await loadMediaFromDB(result.src.replace('__idb__', ''))) || '' };
+        const found = await loadMediaFromDB(result.src.replace('__idb__', ''));
+        if (found) result = { ...result, src: found };
     }
     if (typeof result.coverSrc === 'string' && result.coverSrc.startsWith('__idb__')) {
-        result = { ...result, coverSrc: (await loadMediaFromDB(result.coverSrc.replace('__idb__', ''))) || '' };
+        const found = await loadMediaFromDB(result.coverSrc.replace('__idb__', ''));
+        if (found) result = { ...result, coverSrc: found };
     }
     return result;
 }));
@@ -238,7 +244,13 @@ const resolveMediaNodes = async (nodes) => Promise.all(nodes.map(async (node) =>
 // load it. Best-effort: if Storage isn't reachable/configured, the node comes
 // back unchanged and the IndexedDB/`__idb__` path keeps working locally.
 const isHttpUrl = (s) => typeof s === 'string' && /^https?:\/\//.test(s);
+const MEDIA_SRC_TYPES = ['image', 'video', 'audio'];
+// A node needs a cloud upload if any media field isn't already an https URL.
+// Includes media nodes whose src is empty/`__idb__` so rows that an earlier
+// (buggy) prod-open blanked still get picked up and REPAIRED from a browser
+// that holds the bytes.
 const nodeNeedsUpload = (n) =>
+    (MEDIA_SRC_TYPES.includes(n.type) && !isHttpUrl(n.src)) ||
     (n.src && !isHttpUrl(n.src)) ||
     (n.coverSrc && !isHttpUrl(n.coverSrc)) ||
     (n.type === 'pdf' && !isHttpUrl(n.pdfUrl));
@@ -258,6 +270,14 @@ const resolveUploadable = async (value) => {
     return null;  // already http(s) or unrecognized
 };
 
+// Last-ditch lookup straight from IndexedDB by the keys media is stored under
+// (saveToLocalStorage keys src by node id, cover by `${id}_cover`). Lets us
+// recover + upload even when the node's in-memory ref was blanked to ''.
+const idbUploadable = async (key) => {
+    const stored = await loadMediaFromDB(key);
+    return stored ? { kind: 'dataUrl', value: stored } : null;
+};
+
 const uploadField = async (path, resolved) => {
     if (!resolved) return null;
     return resolved.kind === 'dataUrl'
@@ -272,12 +292,17 @@ const uploadNodeMedia = async (boardId, node) => {
     const base = `${boardId}/${node.id}`;
     let out = node;
 
-    if (out.src && !isHttpUrl(out.src)) {
-        const url = await uploadField(`${base}/src`, await resolveUploadable(out.src));
+    // src — image/video/audio. Try the field value, then the bytes saved under
+    // the node id (repairs a blanked src).
+    if (!isHttpUrl(out.src) && (MEDIA_SRC_TYPES.includes(out.type) || out.src)) {
+        const resolved = (await resolveUploadable(out.src)) || (await idbUploadable(node.id));
+        const url = await uploadField(`${base}/src`, resolved);
         if (url) out = { ...out, src: url };
     }
-    if (out.coverSrc && !isHttpUrl(out.coverSrc)) {
-        const url = await uploadField(`${base}/cover`, await resolveUploadable(out.coverSrc));
+    // coverSrc — PDF cover. Field value, then `${id}_cover`.
+    if (!isHttpUrl(out.coverSrc) && (out.type === 'pdf' || out.coverSrc)) {
+        const resolved = (await resolveUploadable(out.coverSrc)) || (await idbUploadable(`${node.id}_cover`));
+        const url = await uploadField(`${base}/cover`, resolved);
         if (url) out = { ...out, coverSrc: url };
     }
     if (out.type === 'pdf' && !isHttpUrl(out.pdfUrl)) {

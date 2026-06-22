@@ -366,14 +366,17 @@ function VideoNode({ node, commonProps }) {
 function PdfDocumentNode({ node, commonProps }) {
     const { updateNode } = useStore();
     const [recoveredSrc, setRecoveredSrc] = useState(null);
-    const coverToUse = node.coverSrc || recoveredSrc;
+    // An `__idb__` placeholder is NOT a usable cover — fall back to recovery.
+    const coverIsReal = typeof node.coverSrc === 'string'
+        && node.coverSrc.length > 10 && !node.coverSrc.startsWith('__idb__');
+    const coverToUse = coverIsReal ? node.coverSrc : recoveredSrc;
     const image = useImage(coverToUse);
     const w = node.width || 300;
     const h = node.height || 400;
 
-    // Auto-recover cover from PDF bytes in IDB if coverSrc is empty
+    // Auto-recover cover from PDF bytes (IDB, then cloud) if there's no real cover
     useEffect(() => {
-        if (node.coverSrc && node.coverSrc.length > 10) return; // already have a valid cover
+        if (coverIsReal) return; // already have a valid cover
         let cancelled = false;
         const recover = async () => {
             try {
