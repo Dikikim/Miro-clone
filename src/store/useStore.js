@@ -238,6 +238,21 @@ const resolveMediaNodes = async (nodes) => Promise.all(nodes.map(async (node) =>
     return result;
 }));
 
+// Merge the cloud's nodes for a board with this device's local cache. The cloud
+// is authoritative for any node present in BOTH (shared edits win), but nodes
+// that exist ONLY in the local cache are KEPT and the count returned — they're
+// work a save never managed to push (a reload mid-upload, an offline edit, or a
+// board last touched before the cloud migration). Keeping them stops a reload
+// from wiping un-synced content, and the caller re-pushes them so other devices
+// finally receive them. Trade-off: a node deleted on another device but still in
+// this device's cache will reappear — acceptable while losing data is the bug we
+// have, and far safer than silently blanking a board.
+const mergeLocalIntoCloud = (cloudNodes, localNodes) => {
+    const cloudIds = new Set(cloudNodes.map(n => n.id));
+    const localOnly = (localNodes || []).filter(n => n && n.id && !cloudIds.has(n.id));
+    return { nodes: localOnly.length ? [...cloudNodes, ...localOnly] : cloudNodes, localOnlyCount: localOnly.length };
+};
+
 // ── Cloud media (Phase 4) ──────────────────────────────────────────────────
 // Move a node's binary media into Supabase Storage and rewrite the node to hold
 // public URLs, so other board members (and the same user on another device) can
@@ -661,14 +676,21 @@ const useStore = create((set, get) => ({
 
         let nodes = [], comments = [];
         let stagePosition = { x: 0, y: 0 }, stageScale = 1;
+        let hasLocalOnly = false;
         if (currentBoardId) {
             const content = await boardsApi.fetchBoardContent(currentBoardId);
-            nodes = await resolveMediaNodes(content.nodes);
-            comments = content.comments;
-            seedSynced(currentBoardId, content.nodes, lastSyncedNodes);
-            seedSynced(currentBoardId, content.comments, lastSyncedComments);
+            const cloudNodes = await resolveMediaNodes(content.nodes);
             // Viewport is a local preference (not synced to the cloud in Phase 3).
             const localBlob = await loadFromLocalStorage(currentBoardId);
+            // Merge: keep local-only nodes/comments so an un-synced board (or a
+            // transient cloud fetch error) doesn't wipe the canvas.
+            const mNodes = mergeLocalIntoCloud(cloudNodes, localBlob?.nodes);
+            const mComments = mergeLocalIntoCloud(content.comments, localBlob?.comments);
+            nodes = mNodes.nodes;
+            comments = mComments.nodes;
+            hasLocalOnly = mNodes.localOnlyCount > 0 || mComments.localOnlyCount > 0;
+            seedSynced(currentBoardId, content.nodes, lastSyncedNodes);
+            seedSynced(currentBoardId, content.comments, lastSyncedComments);
             stagePosition = localBlob?.stagePosition || stagePosition;
             stageScale = localBlob?.stageScale || stageScale;
             saveCurrentBoardId(currentBoardId);
@@ -685,9 +707,10 @@ const useStore = create((set, get) => ({
             historyIndex: 0,
             isLoading: false,
         });
-        // Lazily migrate any pre-Phase-4 local media to cloud Storage so shared
-        // viewers can see it (syncSave only uploads media this user owns).
-        if (nodes.some(nodeNeedsUpload)) debounceSave(() => get().syncSave());
+        // Push up any local-only nodes (content that never reached the cloud), and
+        // lazily migrate any pre-Phase-4 local media to Storage so shared viewers
+        // can see it (syncSave only uploads/pushes content this user owns).
+        if (hasLocalOnly || nodes.some(nodeNeedsUpload)) debounceSave(() => get().syncSave());
         })();
         try { return await loadDataPromise; } finally { loadDataPromise = null; }
     },
@@ -696,14 +719,19 @@ const useStore = create((set, get) => ({
     // Shared loader: pull a board's content from the cloud into the canvas.
     _activateBoard: async (targetBoardId) => {
         const content = await boardsApi.fetchBoardContent(targetBoardId);
-        const nodes = await resolveMediaNodes(content.nodes);
+        const cloudNodes = await resolveMediaNodes(content.nodes);
+        const localBlob = await loadFromLocalStorage(targetBoardId);
+        // Merge: keep local-only nodes/comments so opening an un-synced board
+        // (or a transient cloud fetch error) doesn't wipe it.
+        const mNodes = mergeLocalIntoCloud(cloudNodes, localBlob?.nodes);
+        const mComments = mergeLocalIntoCloud(content.comments, localBlob?.comments);
+        const nodes = mNodes.nodes;
         seedSynced(targetBoardId, content.nodes, lastSyncedNodes);
         seedSynced(targetBoardId, content.comments, lastSyncedComments);
-        const localBlob = await loadFromLocalStorage(targetBoardId);
         set({
             currentBoardId: targetBoardId,
             nodes,
-            comments: content.comments,
+            comments: mComments.nodes,
             selectedNodeIds: [],
             stagePosition: localBlob?.stagePosition || { x: 0, y: 0 },
             stageScale: localBlob?.stageScale || 1,
@@ -713,7 +741,8 @@ const useStore = create((set, get) => ({
             tool: 'select',
         });
         saveCurrentBoardId(targetBoardId);
-        if (nodes.some(nodeNeedsUpload)) debounceSave(() => get().syncSave());
+        // Re-push local-only nodes/comments + migrate any non-http media this user owns.
+        if (mNodes.localOnlyCount > 0 || mComments.localOnlyCount > 0 || nodes.some(nodeNeedsUpload)) debounceSave(() => get().syncSave());
     },
 
     switchBoard: async (targetBoardId) => {
